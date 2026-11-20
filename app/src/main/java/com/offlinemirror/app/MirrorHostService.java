@@ -40,6 +40,7 @@ public class MirrorHostService extends Service {
     private static final int NOTIFICATION_ID = 71;
     private static final int VIDEO_PORT = 48888;
     private static final int AUDIO_PORT = 48889;
+    private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
 
     private volatile boolean running = false;
@@ -48,13 +49,16 @@ public class MirrorHostService extends Service {
 
     private ServerSocket videoServerSocket;
     private ServerSocket audioServerSocket;
+    private ServerSocket controlServerSocket;
     private Socket videoClientSocket;
     private Socket audioClientSocket;
+    private Socket controlClientSocket;
 
     private MediaProjection projection;
     private MediaProjection.Callback projectionCallback;
     private Thread videoThread;
     private Thread audioThread;
+    private Thread controlThread;
     private AudioRecord audioRecord;
 
     @Override
@@ -116,6 +120,15 @@ public class MirrorHostService extends Service {
 
             // Prepare the local listening ports before the Viewer connects.
             videoServerSocket = openServerSocket(VIDEO_PORT);
+            // Remote Control uses its own optional socket; failure must never stop video.
+            try {
+                controlServerSocket = openServerSocket(CONTROL_PORT);
+                controlThread = new Thread(this::serveControl, "OfflineMirror-Remote-Control");
+                controlThread.start();
+            } catch (Exception controlError) {
+                android.util.Log.w("OfflineMirror",
+                        "Remote Control listener unavailable: " + controlError.getMessage());
+            }
             if (audioEnabled && Build.VERSION.SDK_INT >= 29) {
                 audioServerSocket = openServerSocket(AUDIO_PORT);
             }
@@ -293,6 +306,52 @@ public class MirrorHostService extends Service {
             try { if (output != null) output.close(); } catch (Exception ignored) {}
             try { if (audioClientSocket != null) audioClientSocket.close(); } catch (Exception ignored) {}
         }
+    }
+
+    private void serveControl() {
+        DataInputStream input = null;
+        try {
+            controlClientSocket = acceptAuthenticated(controlServerSocket, "control");
+            controlClientSocket.setTcpNoDelay(true);
+            input = new DataInputStream(
+                    new BufferedInputStream(controlClientSocket.getInputStream()));
+
+            while (running && controlClientSocket != null && !controlClientSocket.isClosed()) {
+                int type = input.readUnsignedByte();
+                float x1 = input.readFloat();
+                float y1 = input.readFloat();
+                float x2 = x1;
+                float y2 = y1;
+                if (type == 3) {
+                    x2 = input.readFloat();
+                    y2 = input.readFloat();
+                } else if (type != 1 && type != 2) {
+                    throw new IOException("Unknown remote gesture type");
+                }
+                int duration = input.readInt();
+                if (!isUnitCoordinate(x1) || !isUnitCoordinate(y1)
+                        || !isUnitCoordinate(x2) || !isUnitCoordinate(y2)) {
+                    throw new IOException("Remote gesture coordinates are invalid");
+                }
+                RemoteAccessibilityService.dispatchRemoteGesture(
+                        type, x1, y1, x2, y2, duration);
+            }
+        } catch (Exception error) {
+            if (running) {
+                android.util.Log.w("OfflineMirror",
+                        "Remote Control disconnected: " + error.getMessage());
+            }
+        } finally {
+            try { if (input != null) input.close(); } catch (Exception ignored) {}
+            try { if (controlClientSocket != null) controlClientSocket.close(); }
+            catch (Exception ignored) {}
+            controlClientSocket = null;
+        }
+    }
+
+    private boolean isUnitCoordinate(float value) {
+        return !Float.isNaN(value) && !Float.isInfinite(value)
+                && value >= 0f && value <= 1f;
     }
 
     private Socket acceptAuthenticated(ServerSocket server, String channel) throws IOException {
@@ -480,6 +539,8 @@ public class MirrorHostService extends Service {
         try { if (videoServerSocket != null) videoServerSocket.close(); } catch (Exception ignored) {}
         try { if (audioClientSocket != null) audioClientSocket.close(); } catch (Exception ignored) {}
         try { if (audioServerSocket != null) audioServerSocket.close(); } catch (Exception ignored) {}
+        try { if (controlClientSocket != null) controlClientSocket.close(); } catch (Exception ignored) {}
+        try { if (controlServerSocket != null) controlServerSocket.close(); } catch (Exception ignored) {}
     }
 
     private void stopStreaming() {
