@@ -570,12 +570,14 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         }
 
         // Rotate only when the Host stream and Viewer viewport have opposite
-        // orientations. Positive 90 degrees is clockwise in screen coordinates.
+        // orientations. Use the opposite direction from the previous build:
+        // landscape Viewer + portrait Host rotates counter-clockwise, while
+        // portrait Viewer + landscape Host rotates clockwise.
         int rotation = 0;
         if (viewWidth > viewHeight && streamWidth < streamHeight) {
-            rotation = 90;
-        } else if (viewHeight > viewWidth && streamWidth > streamHeight) {
             rotation = -90;
+        } else if (viewHeight > viewWidth && streamWidth > streamHeight) {
+            rotation = 90;
         }
 
         float displaySourceWidth = rotation == 0 ? streamWidth : streamHeight;
