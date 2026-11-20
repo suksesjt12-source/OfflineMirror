@@ -288,11 +288,11 @@ public final class GamepadOverlayView extends View {
             if (dx * dx + dy * dy <= r * r) return bit;
         }
         int[] bits = {BUTTON_A, BUTTON_B, BUTTON_X, BUTTON_Y};
-        float r = dp(25);
+        float buttonRadius = dp(25);
         for (int bit : bits) {
             float dx = x - buttonX(bit);
             float dy = y - buttonY(bit);
-            if (dx * dx + dy * dy <= r * r) return bit;
+            if (dx * dx + dy * dy <= buttonRadius * buttonRadius) return bit;
         }
         int[] topBits = {BUTTON_L1, BUTTON_R1, BUTTON_SELECT, BUTTON_START};
         for (int bit : topBits) {
