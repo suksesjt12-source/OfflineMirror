@@ -1,42 +1,50 @@
-# OfflineMirror 1.1.0
+# OfflineMirror 1.2.0
 
-OfflineMirror is an Android screen-mirroring prototype for two phones connected to the same local Wi-Fi network or phone hotspot. It sends H.264 video directly over a local TCP connection. Internet access, cloud accounts, and remote servers are not needed.
+OfflineMirror mirrors a phone screen to another phone over the same local Wi-Fi network or hotspot. The application does not use a cloud server or require internet access after both devices are connected to the local network.
 
-## Version 1.1.0
+## New in version 1.2.0
 
-- Automatic portrait/landscape orientation in both Host and Viewer.
-- Host detects display rotation, resizes its existing Android VirtualDisplay, recreates the H.264 encoder, and sends a stream reconfiguration header.
-- Viewer rebuilds its decoder when the Host changes orientation.
-- Full-screen Viewer hides system navigation/status bars; system UI can be revealed with the normal edge gesture.
-- Host quality controls: 720p/1080p maximum dimension, 15/24/30 FPS, and 2/4/6 Mbps target bitrate.
-- Foreground notification with a Stop action.
-- GitHub Actions builds a debug APK on pushes to main and on manual workflow dispatch.
+- **QR pairing:** the Host creates a QR code containing the local IP address, service ports, audio setting, and a random session key. The Viewer scans it with the camera.
+- **Remote touch:** tap, long-press, and swipe gestures on the Viewer can be sent to the Host. The Host owner must manually enable the OfflineMirror Remote Touch Accessibility service in Android Settings. The service does not retrieve window content; it only dispatches gestures received over the authenticated local session.
+- **Audio playback streaming:** optional device playback audio is captured on Android 10+ with Android's AudioPlaybackCapture API and played through the Viewer. The Host must grant the RECORD_AUDIO permission.
+- **Session authentication:** the video, audio, and touch sockets require the random key embedded in the Host's QR. A Viewer without the key is rejected.
+- **Automatic portrait/landscape orientation** remains supported.
+- 720p/1080p, 15/24/30 FPS, and 2/4/6 Mbps video settings remain available.
 
 ## Build the APK
 
-Open the Actions tab in this repository, select Build OfflineMirror APK, and run Run workflow. After the run completes, open its summary and download the OfflineMirror-debug-apk artifact. The APK is named app-debug.apk.
+Open the Actions tab in this repository, select **Build OfflineMirror APK**, and run **Run workflow**. After the workflow succeeds, download the **OfflineMirror-debug-apk** artifact from its run summary. The APK is named app-debug.apk.
 
-## How to connect two phones
+## Use on two phones
 
-1. Connect both phones to the same Wi-Fi network, or turn on the hotspot on one phone and connect the other phone to it.
-2. Install OfflineMirror 1.1.0 on both phones.
-3. Open OfflineMirror on the phone whose screen will be shared.
-4. Select the quality, frame rate, and bitrate, then tap START SCREEN SHARING.
-5. Approve Android's screen-capture permission. Keep OfflineMirror running; Android displays an ongoing notification while sharing.
-6. Read the host IP address shown in the app. If the displayed address is unavailable or incorrect, check the phone's Wi-Fi details and use its local IPv4 address.
-7. On the second phone, open OfflineMirror, enter the host IP (without the port), and tap CONNECT TO HOST.
-8. Rotate either phone between portrait and landscape. The Viewer window follows the Viewer phone's orientation, while the Host stream updates its encoded dimensions when the Host phone rotates.
-9. Stop sharing from the Host app or its persistent notification.
+1. Install the same OfflineMirror version on both phones.
+2. Connect both phones to the same Wi-Fi network, or enable a hotspot on one phone and connect the second phone to it.
+3. On the Host phone, select video quality and frame rate. Leave audio enabled only when you want to share playback audio.
+4. Tap **START SCREEN SHARING** and approve Android's screen-capture permission. Grant RECORD_AUDIO if you want audio.
+5. Show the Host pairing QR. On the Viewer phone, tap **SCAN HOST QR CODE** and scan it.
+6. The Viewer opens the screen stream and attempts the audio and touch connections.
+7. For remote touch, the Host owner must open **ENABLE REMOTE TOUCH ON THIS PHONE**, go to Android Accessibility settings, and manually enable **OfflineMirror Remote Touch**. This permission is not enabled by the app automatically.
+8. Touch, swipe, or long-press within the Viewer area to send the gesture to the Host.
+9. Stop sharing from the Host app or its persistent notification. Stopping the session invalidates the current pairing key.
 
-## Limitations
+## Important audio limitations
 
-- This is an early prototype and supports one Viewer at a time.
-- Both phones must be on the same local network and must be able to reach each other. Some guest Wi-Fi networks enable client isolation and block this.
-- Android requires explicit screen-capture approval each time a new Host session starts.
-- The Viewer displays the shared screen. Remote touch/control, audio streaming, QR pairing, automatic device discovery, and encrypted transport are not implemented.
-- Actual resolution, frame rate, and latency depend on the phone's H.264 encoder, Wi-Fi conditions, and Android version.
-- The rotation transition briefly restarts the video encoder; a short pause during the transition is expected.
-- Only share a screen when you have permission to display its contents. Notifications and private information visible on the Host screen may also be transmitted.
+Android's playback capture API is available from Android 10 (API 29). Only playback from apps that permit capture can be received; apps may block capture for privacy or policy reasons. Protected media and some communication/system sounds may not be available. Audio streaming may not work on Android 8 or 9.
+
+## Security and privacy
+
+- The QR contains a random session key. Treat it like a temporary access code and show it only to the intended Viewer.
+- The stream uses ordinary local TCP sockets, not TLS encryption. Use a trusted private hotspot or Wi-Fi network; do not expose these ports to public networks.
+- The Host owner must approve screen capture and explicitly enable the Accessibility service before remote gestures can be injected.
+- Screen notifications and visible private information may appear on the Viewer. Do not mirror sensitive content.
+- Remote touch is limited to an active, explicitly paired OfflineMirror session. Disable the Accessibility service in Android Settings when you no longer need it.
+
+## Current scope
+
+- One Host and one Viewer.
+- Video, optional system playback audio, QR pairing, and basic touch gestures.
+- No microphone streaming, keyboard text injection, file transfer, internet relay, or multi-viewer support.
+- Actual latency and supported audio depend on device hardware, Android version, local network quality, and the app being captured.
 
 ## Platform
 
