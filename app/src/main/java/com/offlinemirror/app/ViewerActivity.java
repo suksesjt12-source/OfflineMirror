@@ -132,7 +132,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         gamepadStatus.setMaxLines(2);
         gamepadStatus.setMaxWidth(dp(190));
         gamepadBar.addView(gamepadStatus, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+                dp(180), ViewGroup.LayoutParams.MATCH_PARENT));
         gamepadButton = new Button(this);
         gamepadButton.setText("AKTIFKAN BT");
         gamepadButton.setTextSize(9);
