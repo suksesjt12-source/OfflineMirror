@@ -61,6 +61,8 @@ public class MirrorHostService extends Service {
     private Thread audioThread;
     private Thread controlThread;
     private AudioRecord audioRecord;
+    private volatile int reportedCaptureWidth;
+    private volatile int reportedCaptureHeight;
 
     @Override
     public void onCreate() {
@@ -115,6 +117,16 @@ public class MirrorHostService extends Service {
                     closeSockets();
                     stopSelf();
                 }
+
+                @Override
+                public void onCapturedContentResize(int width, int height) {
+                    if (width > 1 && height > 1) {
+                        reportedCaptureWidth = width;
+                        reportedCaptureHeight = height;
+                        android.util.Log.i("OfflineMirror",
+                                "Captured content resized to " + width + "x" + height);
+                    }
+                }
             };
             projection.registerCallback(projectionCallback, new Handler(getMainLooper()));
             running = true;
@@ -166,6 +178,7 @@ public class MirrorHostService extends Service {
         EncoderSession session = null;
         DataOutputStream output = null;
         boolean streamHeaderSent = false;
+        boolean streamHeaderEverSent = false;
 
         try {
             videoClientSocket = acceptAuthenticated(videoServerSocket, "video");
@@ -178,13 +191,32 @@ public class MirrorHostService extends Service {
 
             long framesSent = 0;
             long bytesSent = 0;
-            android.util.Log.i("OfflineMirror", "Single H.264 capture session active at "
+            android.util.Log.i("OfflineMirror", "H.264 capture session active at "
                     + session.width + "x" + session.height
-                    + ". Rotation changes only resize the Viewer surface.");
+                    + " rotation=" + session.rotation);
 
             while (running && videoClientSocket != null && !videoClientSocket.isClosed()) {
-                // Keep the initial MediaProjection VirtualDisplay and encoder alive.
-                // Reconfiguring either during device rotation caused black video on some phones.
+                // MediaProjection keeps the original encoder dimensions unless the
+                // VirtualDisplay and encoder are resized when the Host rotates.
+                DisplayMetrics currentMetrics = getCaptureDisplayMetrics();
+                int[] currentSize = scaledSize(currentMetrics, maxDimension);
+                int currentRotation = getDisplayRotation();
+                if (currentRotation != session.rotation
+                        || currentSize[0] != session.width
+                        || currentSize[1] != session.height) {
+                    int oldWidth = session.width;
+                    int oldHeight = session.height;
+                    session = reconfigureSession(session, maxDimension, fps, bitrate);
+                    // Do not send frames from the new encoder until its SPS/PPS
+                    // header has been sent to the Viewer.
+                    streamHeaderSent = false;
+                    android.util.Log.i("OfflineMirror", "Host display changed "
+                            + oldWidth + "x" + oldHeight + " -> "
+                            + session.width + "x" + session.height
+                            + " rotation=" + session.rotation);
+                    continue;
+                }
+
                 int index = session.encoder.dequeueOutputBuffer(info, 150_000);
                 if (index == MediaCodec.INFO_TRY_AGAIN_LATER) continue;
 
@@ -199,9 +231,10 @@ public class MirrorHostService extends Service {
                         throw new IllegalStateException(
                                 "Encoder H.264 tidak memberikan SPS/PPS (codec config kosong)");
                     }
-                    if (streamHeaderSent) output.writeInt(-1);
+                    if (streamHeaderEverSent) output.writeInt(-1);
                     writeStreamHeader(output, session.width, session.height, csd0, csd1);
                     streamHeaderSent = true;
+                    streamHeaderEverSent = true;
                     continue;
                 }
                 if (index < 0) continue;
@@ -417,10 +450,9 @@ public class MirrorHostService extends Service {
 
     private EncoderSession createInitialSession(int maxDimension, int fps, int bitrate)
             throws Exception {
-        DisplayMetrics metrics = new DisplayMetrics();
+        DisplayMetrics metrics = getCaptureDisplayMetrics();
         WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         Display display = wm.getDefaultDisplay();
-        display.getRealMetrics(metrics);
         int[] size = scaledSize(metrics, maxDimension);
 
         MediaCodec encoder = createEncoder(size[0], size[1], fps, bitrate);
@@ -459,10 +491,9 @@ public class MirrorHostService extends Service {
 
     private EncoderSession reconfigureSession(EncoderSession old, int maxDimension,
                                                int fps, int bitrate) throws Exception {
-        DisplayMetrics metrics = new DisplayMetrics();
+        DisplayMetrics metrics = getCaptureDisplayMetrics();
         WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         Display display = wm.getDefaultDisplay();
-        display.getRealMetrics(metrics);
         int[] size = scaledSize(metrics, maxDimension);
 
         MediaCodec nextEncoder = createEncoder(size[0], size[1], fps, bitrate);
@@ -520,6 +551,22 @@ public class MirrorHostService extends Service {
             try { encoder.release(); } catch (Exception ignored) {}
             throw error;
         }
+    }
+
+    private DisplayMetrics getCaptureDisplayMetrics() {
+        DisplayMetrics metrics = new DisplayMetrics();
+        WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        wm.getDefaultDisplay().getRealMetrics(metrics);
+
+        // Android 14+ reports the exact captured-content size when it changes.
+        // Older versions fall back to the current real display metrics.
+        int width = reportedCaptureWidth;
+        int height = reportedCaptureHeight;
+        if (width > 1 && height > 1) {
+            metrics.widthPixels = width;
+            metrics.heightPixels = height;
+        }
+        return metrics;
     }
 
     private int[] scaledSize(DisplayMetrics metrics, int maxDimension) {
