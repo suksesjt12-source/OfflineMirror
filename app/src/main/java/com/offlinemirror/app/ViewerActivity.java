@@ -6,6 +6,7 @@ import android.app.AlertDialog;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Matrix;
@@ -552,7 +553,17 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private void setStreamDimensions(StreamConfig config) {
         streamWidth = config.width;
         streamHeight = config.height;
-        runOnUiThread(this::updateVideoSurfaceLayout);
+        final int targetOrientation = config.width > config.height
+                ? ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        runOnUiThread(() -> {
+            // The Viewer follows the Host stream's aspect orientation. This avoids
+            // rotating the decoded frame in two separate places on two devices.
+            if (getRequestedOrientation() != targetOrientation) {
+                setRequestedOrientation(targetOrientation);
+            }
+            updateVideoSurfaceLayout();
+        });
     }
 
     private void updateVideoSurfaceLayout() {
@@ -569,19 +580,11 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             return;
         }
 
-        // Rotate only when the Host stream and Viewer viewport have opposite
-        // orientations. Use the opposite direction from the previous build:
-        // landscape Viewer + portrait Host rotates counter-clockwise, while
-        // portrait Viewer + landscape Host rotates clockwise.
-        int rotation = 0;
-        if (viewWidth > viewHeight && streamWidth < streamHeight) {
-            rotation = -90;
-        } else if (viewHeight > viewWidth && streamWidth > streamHeight) {
-            rotation = 90;
-        }
-
-        float displaySourceWidth = rotation == 0 ? streamWidth : streamHeight;
-        float displaySourceHeight = rotation == 0 ? streamHeight : streamWidth;
+        // Host orientation is applied to this Activity when each stream header
+        // arrives. Keep decoded pixels upright; only scale/crop to the Viewer bounds.
+        final int rotation = 0;
+        float displaySourceWidth = streamWidth;
+        float displaySourceHeight = streamHeight;
         float scale = Math.max(
                 (float) viewWidth / displaySourceWidth,
                 (float) viewHeight / displaySourceHeight);
@@ -600,29 +603,12 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 viewWidth, viewHeight,
                 0f, viewHeight
         };
-        float[] destination;
-        if (rotation == 90) {
-            destination = new float[] {
-                    right, top,
-                    right, bottom,
-                    left, bottom,
-                    left, top
-            };
-        } else if (rotation == -90) {
-            destination = new float[] {
-                    left, bottom,
-                    left, top,
-                    right, top,
-                    right, bottom
-            };
-        } else {
-            destination = new float[] {
-                    left, top,
-                    right, top,
-                    right, bottom,
-                    left, bottom
-            };
-        }
+        float[] destination = {
+                left, top,
+                right, top,
+                right, bottom,
+                left, bottom
+        };
 
         Matrix transform = new Matrix();
         if (transform.setPolyToPoly(source, 0, destination, 0, 4)) {
