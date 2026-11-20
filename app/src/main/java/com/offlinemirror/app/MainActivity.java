@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.net.Uri;
@@ -96,7 +97,7 @@ public class MainActivity extends Activity {
         page.addView(title, matchWrap());
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("Offline screen mirroring • Portrait • Local Wi-Fi");
+        subtitle.setText("Offline screen mirroring • Adaptive orientation • No internet required");
         subtitle.setTextColor(Color.rgb(161, 174, 196));
         subtitle.setTextSize(14);
         subtitle.setGravity(Gravity.CENTER);
@@ -165,7 +166,8 @@ public class MainActivity extends Activity {
                 + "  •  Port Host: " + VIDEO_PORT);
         hostAddress.setTextColor(Color.rgb(190, 205, 229));
         hostAddress.setTextSize(14);
-        hostAddress.setPadding(dp(12), dp(14), dp(12), dp(14));
+        hostAddress.setPadding(dp(14), dp(14), dp(14), dp(14));
+        hostAddress.setBackground(roundedSurface(0xFF111D2D, 0xFF2A3B55, 14));
         LinearLayout.LayoutParams ipParams = matchWrap();
         ipParams.topMargin = dp(8);
         page.addView(hostAddress, ipParams);
@@ -175,7 +177,8 @@ public class MainActivity extends Activity {
         hostKeyText.setTextColor(Color.rgb(190, 205, 229));
         hostKeyText.setTextSize(14);
         hostKeyText.setTextIsSelectable(true);
-        hostKeyText.setPadding(dp(12), dp(12), dp(12), dp(12));
+        hostKeyText.setPadding(dp(14), dp(12), dp(14), dp(12));
+        hostKeyText.setBackground(roundedSurface(0xFF111D2D, 0xFF2A3B55, 14));
         LinearLayout.LayoutParams keyParams = matchWrap();
         keyParams.topMargin = dp(4);
         page.addView(hostKeyText, keyParams);
@@ -264,13 +267,15 @@ public class MainActivity extends Activity {
 
         statusText = new TextView(this);
         statusText.setTextColor(Color.rgb(159, 177, 203));
-        statusText.setText("Hubungkan kedua HP ke Wi-Fi/hotspot yang sama. Scan QR dari HP Host atau masukkan IP dan pairing key.");
+        statusText.setText("Hubungkan kedua HP ke Wi-Fi/hotspot yang sama. Scan QR Host atau masukkan IP dan pairing key.");
+        statusText.setPadding(dp(14), dp(12), dp(14), dp(12));
+        statusText.setBackground(roundedSurface(0xFF111D2D, 0xFF2A3B55, 14));
         LinearLayout.LayoutParams statusParams = matchWrap();
         statusParams.topMargin = dp(20);
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Input virtual gamepad dan mouse dikirim lewat Bluetooth HID standar. Mapping tombol diperbaiki mengikuti urutan Android Standard (A/B/X/Y, L1/R1/L2/R2, Select/Start dan D-pad); game atau emulator yang mendukung controller akan membaca mapping standar, tetapi profil khusus tiap game tetap dapat berbeda. Viewer menyediakan dua stick analog, D-pad, tombol bahu dan trackpad mouse dengan cursor di layar. Tombol HUD − menyembunyikan toolbar Pair, Settings, volume, Media dan Clipboard; HUD + menampilkannya kembali. Wi-Fi hanya dipakai untuk video, audio opsional dan perintah utilitas. Bluetooth HID memerlukan Android 9+ serta dukungan profil HID Device dari firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
+        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Gamepad dan mouse virtual dikirim melalui Bluetooth HID standar. Viewer menyediakan dua stick analog, D-pad, tombol bahu, trackpad, double-tap klik, klik kiri/kanan, serta scroll atas/bawah. Gunakan tombol LAYOUT untuk menggeser panel mouse dan seluruh susunan gamepad; posisi disimpan otomatis. Cursor ditampilkan oleh HP Host, bukan digambar ulang di Viewer. Tombol HUD − menyembunyikan toolbar dan HUD + menampilkannya kembali. Wi-Fi membawa video, audio opsional, serta perintah utilitas. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
@@ -451,7 +456,7 @@ public class MainActivity extends Activity {
         input.setHint(hint);
         input.setTextSize(15);
         input.setPadding(dp(14), dp(12), dp(14), dp(12));
-        input.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(82, 116, 165)));
+        input.setBackground(roundedSurface(0xFF111D2D, 0xFF3D5D82, 12));
     }
 
     private LinearLayout.LayoutParams matchWrap() {
@@ -463,10 +468,11 @@ public class MainActivity extends Activity {
     private void addSectionTitle(LinearLayout parent, String text) {
         TextView view = new TextView(this);
         view.setText(text);
-        view.setTextColor(Color.rgb(115, 174, 255));
+        view.setTextColor(Color.rgb(132, 190, 255));
         view.setTextSize(13);
         view.setTypeface(null, 1);
-        view.setPadding(0, dp(8), 0, dp(10));
+        view.setPadding(dp(14), dp(12), dp(14), dp(12));
+        view.setBackground(roundedSurface(0xFF17263A, 0xFF344B68, 12));
         parent.addView(view, matchWrap());
     }
 
@@ -475,6 +481,7 @@ public class MainActivity extends Activity {
         label.setText(text);
         label.setTextColor(Color.rgb(196, 207, 224));
         label.setTextSize(13);
+        label.setTypeface(null, 1);
         LinearLayout.LayoutParams params = matchWrap();
         params.topMargin = dp(8);
         params.bottomMargin = dp(4);
@@ -491,13 +498,23 @@ public class MainActivity extends Activity {
         return spinner;
     }
 
+    private GradientDrawable roundedSurface(int color, int borderColor, int radiusDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(radiusDp));
+        drawable.setStroke(dp(1), borderColor);
+        return drawable;
+    }
+
     private Button makeButton(String text, int color) {
         Button button = new Button(this);
         button.setText(text);
         button.setTextColor(Color.WHITE);
         button.setTextSize(13);
         button.setAllCaps(false);
-        button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(color));
+        button.setMinHeight(dp(48));
+        button.setBackground(roundedSurface(color, 0x665F8BC4, 14));
+        button.setElevation(dp(2));
         return button;
     }
 

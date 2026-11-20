@@ -1,4 +1,4 @@
-# OfflineMirror 1.36.0
+# OfflineMirror 1.37.0
 
 OfflineMirror mirrors an Android display to another Android phone over the same private Wi-Fi or hotspot. Internet access is not required.
 
@@ -19,8 +19,11 @@ OfflineMirror mirrors an Android display to another Android phone over the same 
 - Gamepad reports use Android-oriented button usage IDs, a hat-switch D-pad, X/Y and Z/Rz axes, and C5/C4 trigger axes.
 - Mouse movement is accumulated before reports are sent. Fast trackpad movement is split into valid signed HID packets instead of replacing earlier movement samples.
 - Mouse button press/release transitions are sent independently from movement so clicks are not lost.
-- The Viewer trackpad retains fractional motion and tracks its mouse pointer independently from the left/right click pointers.
-- Gamepad stick zones are captured before button zones; the D-pad and shoulder/start/select hit areas have been spaced to reduce accidental or ambiguous presses.
+- The Viewer now uses one pointer only on the Host; no duplicate software cursor is drawn over the mirrored image.
+- The trackpad supports double-tap left-click, dedicated left/right click zones, and dedicated scroll-up/scroll-down controls.
+- The mouse panel and complete gamepad overlay can be repositioned with the LAYOUT tool. Their normalized positions are saved locally and restored after reconnect/orientation changes.
+- Gamepad button pointers are reconciled against active MotionEvent pointers. A final pointer-up/cancel always sends a neutral state, and queued axis reports are serialized with D-pad/button edges so stale reports cannot reassert a released direction.
+- Viewer decoder output buffers are drained while waiting for input buffers. Video sockets have a stall timeout and automatically reconnect; the decoder is released per connection but the Surface is retained across network retries.
 - A focus loss, gamepad overlay hide, or activity shutdown sends neutral controller state to prevent held buttons.
 
 ## Automatic mapping and compatibility
@@ -29,11 +32,11 @@ Android's controller usage table maps A/B/X/Y to Button usages 1/2/4/5, L1/R1 to
 
 ## Mouse controls
 
-In Viewer, tap **MOUSE** to show the trackpad and cursor preview. Drag the left portion of the trackpad to move the Bluetooth mouse pointer on the Host. Tap the upper-right zone for left click and the lower-right zone for right click. The visible cursor preview follows trackpad movement on the Viewer; the paired Host should also show the system pointer when its Bluetooth HID stack supports mouse input.
+In Viewer, tap **MOUSE** to show the trackpad. Drag the left region to move the mouse pointer on the Host; double-tap the trackpad for left click. The right-side controls provide left click, right click, scroll up, and scroll down. The operating-system pointer is displayed by the Host only.
 
 ## HUD
 
-Use **HUD −** to hide the status area and toolbar (Pair, Settings, Mouse, volume, Media and Clipboard). **HUD +** restores the controls. The setting is remembered.
+Use LAYOUT to enter edit mode, then drag the mouse panel or the gamepad overlay to reposition it. Tap SELESAI when finished. Positions are saved automatically. Use HUD − to hide the status area and toolbar (Pair, Settings, Mouse, Layout, volume, Media and Clipboard). HUD + restores the controls. The setting is remembered.
 
 ## Network channels
 

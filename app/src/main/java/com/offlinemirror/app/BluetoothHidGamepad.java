@@ -347,12 +347,13 @@ public final class BluetoothHidGamepad {
     }
 
     private void sendPendingGamepadReport() {
-        byte[] report;
         synchronized (reportLock) {
-            report = pendingGamepadReport;
+            byte[] report = pendingGamepadReport;
             pendingGamepadReport = null;
+            // Serialize send with sendState so an older axis-only report cannot
+            // race a D-pad release and be delivered after the newer neutral state.
+            sendReportNow(GAMEPAD_REPORT_ID, report);
         }
-        sendReportNow(GAMEPAD_REPORT_ID, report);
     }
 
     private void sendReportNow(int reportId, byte[] report) {

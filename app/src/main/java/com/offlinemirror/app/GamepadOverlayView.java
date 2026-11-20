@@ -18,6 +18,10 @@ public final class GamepadOverlayView extends View {
                             float rightX, float rightY);
     }
 
+    public interface LayoutChangedListener {
+        void onPositionChanged(float offsetX, float offsetY);
+    }
+
     // First ten bits map to standard HID buttons. D-pad bits are encoded as a HID hat switch.
     private static final int BUTTON_A = 1 << 0;
     private static final int BUTTON_B = 1 << 1;
@@ -41,6 +45,11 @@ public final class GamepadOverlayView extends View {
     private Listener listener;
     private float sensitivity = 1.0f;
     private int layoutPreset = 0;
+    private float positionOffsetX, positionOffsetY;
+    private boolean layoutEditMode;
+    private int movePointer = -1;
+    private float moveLastX, moveLastY;
+    private LayoutChangedListener layoutChangedListener;
 
     public void setSensitivity(float value) {
         sensitivity = Math.max(0.5f, Math.min(1.8f, value));
@@ -53,6 +62,25 @@ public final class GamepadOverlayView extends View {
     }
 
     private float sizeScale() { return layoutPreset == 1 ? 0.78f : 1.0f; }
+
+    public void setLayoutChangedListener(LayoutChangedListener listener) {
+        layoutChangedListener = listener;
+    }
+    public void setPositionOffset(float x, float y) {
+        positionOffsetX = Math.max(-0.18f, Math.min(0.18f, x));
+        positionOffsetY = Math.max(-0.16f, Math.min(0.16f, y));
+        invalidate();
+    }
+    public float getPositionOffsetX() { return positionOffsetX; }
+    public float getPositionOffsetY() { return positionOffsetY; }
+    public void setLayoutEditMode(boolean enabled) {
+        layoutEditMode = enabled;
+        movePointer = -1;
+        if (enabled) releaseAllInputs();
+        invalidate();
+    }
+    private float offsetX() { return getWidth() * positionOffsetX; }
+    private float offsetY() { return getHeight() * positionOffsetY; }
 
     private int buttons;
     private int leftStickPointer = -1;
@@ -104,27 +132,22 @@ public final class GamepadOverlayView extends View {
     }
 
     private float leftStickCenterX() {
-        if (layoutPreset == 2) return getWidth() * (isLandscapeLayout() ? 0.82f : 0.82f);
-        return getWidth() * (isLandscapeLayout() ? 0.14f : 0.18f);
-    }
+        if (layoutPreset == 2) return getWidth() * 0.82f + offsetX();
+        return getWidth() * (isLandscapeLayout() ? 0.14f : 0.18f) + offsetX();    }
 
     private float rightStickCenterX() {
-        if (layoutPreset == 2) return getWidth() * (isLandscapeLayout() ? 0.32f : 0.48f);
-        return getWidth() * (isLandscapeLayout() ? 0.66f : 0.52f);
-    }
+        if (layoutPreset == 2) return getWidth() * (isLandscapeLayout() ? 0.32f : 0.48f) + offsetX();
+        return getWidth() * (isLandscapeLayout() ? 0.66f : 0.52f) + offsetX();    }
 
     private float stickCenterY() {
-        return getHeight() * (isLandscapeLayout() ? 0.81f : 0.84f);
-    }
+        return getHeight() * (isLandscapeLayout() ? 0.81f : 0.84f) + offsetY();    }
 
     private float dpadCenterX() {
-        return getWidth() * (layoutPreset == 2 ? 0.82f : (isLandscapeLayout() ? 0.14f : 0.18f));
-    }
+        return getWidth() * (layoutPreset == 2 ? 0.82f : (isLandscapeLayout() ? 0.14f : 0.18f)) + offsetX();    }
 
     private float dpadCenterY() {
         // Keep the D-pad hit area clear of the left analog stick.
-        return getHeight() * (isLandscapeLayout() ? 0.44f : 0.48f);
-    }
+        return getHeight() * (isLandscapeLayout() ? 0.44f : 0.48f) + offsetY();    }
 
     private float dpadRadius() {
         return Math.min(dp(20) * sizeScale(), Math.min(getWidth(), getHeight()) * 0.05f);
@@ -180,20 +203,22 @@ public final class GamepadOverlayView extends View {
         } else {
             x = getWidth() * 0.88f;
         }
-        return layoutPreset == 2 ? getWidth() - x : x;
-    }
+        return (layoutPreset == 2 ? getWidth() - x : x) + offsetX();    }
 
     private float buttonY(int bit) {
+        float y;
         if (isLandscapeLayout()) {
-            if (bit == BUTTON_Y) return getHeight() * 0.65f;
-            if (bit == BUTTON_A) return getHeight() * 0.87f;
-            if (bit == BUTTON_X || bit == BUTTON_B) return getHeight() * 0.76f;
-            return getHeight() * 0.10f;
+            if (bit == BUTTON_Y) y = getHeight() * 0.65f;
+            else if (bit == BUTTON_A) y = getHeight() * 0.87f;
+            else if (bit == BUTTON_X || bit == BUTTON_B) y = getHeight() * 0.76f;
+            else y = getHeight() * 0.10f;
+        } else {
+            if (bit == BUTTON_Y) y = getHeight() * 0.56f;
+            else if (bit == BUTTON_X || bit == BUTTON_B) y = getHeight() * 0.65f;
+            else if (bit == BUTTON_A) y = getHeight() * 0.74f;
+            else y = getHeight() * 0.08f;
         }
-        if (bit == BUTTON_Y) return getHeight() * 0.56f;
-        if (bit == BUTTON_X || bit == BUTTON_B) return getHeight() * 0.65f;
-        if (bit == BUTTON_A) return getHeight() * 0.74f;
-        return getHeight() * 0.08f;
+        return y + offsetY();
     }
 
     @Override
@@ -216,6 +241,16 @@ public final class GamepadOverlayView extends View {
         drawPill(canvas, BUTTON_START, "START");
         drawPill(canvas, BUTTON_R2, "R2");
         drawPill(canvas, BUTTON_R1, "R1");
+        if (layoutEditMode) {
+            stroke.setColor(0xFF75B9FF);
+            stroke.setStrokeWidth(dp(2.5f));
+            canvas.drawRoundRect(dp(6), dp(6), getWidth() - dp(6),
+                    getHeight() - dp(6), dp(18), dp(18), stroke);
+            label.setColor(0xFF8CC8FF);
+            drawLabel(canvas, "GESER UNTUK MENGATUR POSISI GAMEPAD",
+                    getWidth() / 2f, dp(26), dp(11));
+            label.setColor(0xFFF4F7FC);
+        }
     }
 
     private void drawStick(Canvas canvas, float cx, float cy,
@@ -416,8 +451,65 @@ public final class GamepadOverlayView extends View {
         releaseAllInputs();
     }
 
+    private boolean handleLayoutDrag(MotionEvent event) {
+        int action = event.getActionMasked(), index = event.getActionIndex();
+        if (action == MotionEvent.ACTION_DOWN) {
+            movePointer = event.getPointerId(index);
+            moveLastX = event.getX(index);
+            moveLastY = event.getY(index);
+            return true;
+        }
+        if (action == MotionEvent.ACTION_MOVE && movePointer != -1) {
+            int i = event.findPointerIndex(movePointer);
+            if (i >= 0 && getWidth() > 0 && getHeight() > 0) {
+                float x = event.getX(i), y = event.getY(i);
+                float dx = x - moveLastX, dy = y - moveLastY;
+                moveLastX = x;
+                moveLastY = y;
+                if (dx != 0f || dy != 0f) {
+                    setPositionOffset(positionOffsetX + dx / getWidth(),
+                            positionOffsetY + dy / getHeight());
+                    if (layoutChangedListener != null) {
+                        layoutChangedListener.onPositionChanged(positionOffsetX, positionOffsetY);
+                    }
+                }
+            }
+            return true;
+        }
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP
+                || action == MotionEvent.ACTION_CANCEL) movePointer = -1;
+        return true;
+    }
+
+    private void cleanupMissingPointers(MotionEvent event) {
+        boolean changed = false;
+        java.util.Iterator<Map.Entry<Integer, Integer>> it = buttonPointers.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, Integer> entry = it.next();
+            if (event.findPointerIndex(entry.getKey()) < 0) {
+                it.remove();
+                changed = true;
+            }
+        }
+        if (leftStickPointer != -1 && event.findPointerIndex(leftStickPointer) < 0) {
+            leftStickPointer = -1;
+            leftAxisX = leftAxisY = 0f;
+            changed = true;
+        }
+        if (rightStickPointer != -1 && event.findPointerIndex(rightStickPointer) < 0) {
+            rightStickPointer = -1;
+            rightAxisX = rightAxisY = 0f;
+            changed = true;
+        }
+        if (changed) {
+            rebuildButtonMask();
+            emitState();
+        }
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        if (layoutEditMode) return handleLayoutDrag(event);
         int action = event.getActionMasked();
         int index = event.getActionIndex();
 
@@ -427,6 +519,7 @@ public final class GamepadOverlayView extends View {
         }
 
         if (action == MotionEvent.ACTION_MOVE) {
+            cleanupMissingPointers(event);
             if (leftStickPointer != -1) {
                 int i = event.findPointerIndex(leftStickPointer);
                 if (i >= 0) {
@@ -446,6 +539,7 @@ public final class GamepadOverlayView extends View {
 
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
             releasePointer(event, index);
+            if (action == MotionEvent.ACTION_UP) releaseAllInputs();
             return true;
         }
 
@@ -459,5 +553,11 @@ public final class GamepadOverlayView extends View {
             return true;
         }
         return true;
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        releaseAllInputs();
+        super.onDetachedFromWindow();
     }
 }

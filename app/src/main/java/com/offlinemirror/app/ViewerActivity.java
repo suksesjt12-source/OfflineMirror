@@ -67,7 +67,14 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private GamepadOverlayView gamepadOverlay;
     private BluetoothHidGamepad bluetoothGamepad;
     private MouseOverlayView mouseOverlay;
-    private MouseCursorView mouseCursor;
+    private Button layoutToolButton;
+    private boolean layoutEditMode;
+    private boolean mouseWasHiddenBeforeLayout;
+    private boolean gamepadWasHiddenBeforeLayout;
+    private boolean mousePositionSaved;
+    private float mousePositionX = 0.5f;
+    private float mousePositionY = 0.08f;
+    private volatile long receiveGeneration;
     private volatile String bluetoothStatus =
             "Bluetooth HID belum tersambung • tekan PAIR BT";
     private boolean controlEnabled = true;
@@ -116,6 +123,12 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         showPerformance = preferences.getBoolean("performance_overlay", true);
         gamepadSensitivity = preferences.getFloat("gamepad_sensitivity", 1.0f);
         gamepadPreset = preferences.getInt("gamepad_preset", 0);
+        float savedGamepadX = preferences.getFloat("gamepad_offset_x", 0f);
+        float savedGamepadY = preferences.getFloat("gamepad_offset_y", 0f);
+        mousePositionSaved = preferences.contains("mouse_position_x")
+                && preferences.contains("mouse_position_y");
+        mousePositionX = preferences.getFloat("mouse_position_x", 0.5f);
+        mousePositionY = preferences.getFloat("mouse_position_y", 0.08f);
         videoPort = getIntent().getIntExtra("videoPort", VIDEO_PORT);
         audioPort = getIntent().getIntExtra("audioPort", AUDIO_PORT);
         controlPort = getIntent().getIntExtra("controlPort", CONTROL_PORT);
@@ -171,12 +184,19 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
                 Gravity.CENTER));
         videoFrame.addOnLayoutChangeListener((view, left, top, right, bottom,
-                                               oldLeft, oldTop, oldRight, oldBottom) ->
-                updateVideoSurfaceLayout());
+                                               oldLeft, oldTop, oldRight, oldBottom) -> {
+            updateVideoSurfaceLayout();
+            applyStoredMousePosition();
+        });
 
         gamepadOverlay = new GamepadOverlayView(this);
         gamepadOverlay.setSensitivity(gamepadSensitivity);
         gamepadOverlay.setLayoutPreset(gamepadPreset);
+        gamepadOverlay.setPositionOffset(savedGamepadX, savedGamepadY);
+        gamepadOverlay.setLayoutChangedListener((x, y) ->
+                getSharedPreferences("offline_mirror_settings", MODE_PRIVATE).edit()
+                        .putFloat("gamepad_offset_x", x)
+                        .putFloat("gamepad_offset_y", y).apply());
         gamepadOverlay.setListener(new GamepadOverlayView.Listener() {
             @Override
             public void onGamepadState(int buttons, float leftX, float leftY,
@@ -190,23 +210,16 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         mouseOverlay = new MouseOverlayView(this);
-        mouseCursor = new MouseCursorView(this);
-        mouseCursor.setVisibility(View.GONE);
-        FrameLayout.LayoutParams cursorParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-        videoFrame.addView(mouseCursor, cursorParams);
         mouseOverlay.setListener((dx, dy, buttons, wheel) -> {
             if (bluetoothGamepad != null) bluetoothGamepad.sendMouse(dx, dy, buttons, wheel);
-            if (mouseCursor != null && (dx != 0 || dy != 0)) {
-                mouseCursor.moveBy(Math.max(-127, Math.min(127, dx)),
-                        Math.max(-127, Math.min(127, dy)));
-            }
         });
+        mouseOverlay.setLayoutMoveListener((dx, dy) -> moveMouseOverlay(dx, dy));
         mouseOverlay.setVisibility(View.GONE);
         FrameLayout.LayoutParams mouseParams = new FrameLayout.LayoutParams(
-                dp(260), dp(84), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+                dp(304), dp(136), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         mouseParams.topMargin = dp(48);
         videoFrame.addView(mouseOverlay, mouseParams);
+        mouseOverlay.post(this::applyStoredMousePosition);
         videoFrame.setClipChildren(true);
         videoFrame.setClipToPadding(true);
         root.addView(videoFrame, new FrameLayout.LayoutParams(
@@ -224,9 +237,10 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         toolsBar.setOrientation(LinearLayout.HORIZONTAL);
         toolsBar.setGravity(Gravity.CENTER);
         toolsBar.setBackgroundColor(0xBB111923);
-        String[] toolNames = {"SETTINGS", "BLUETOOTH", "MOUSE", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
+        String[] toolNames = {"SETTINGS", "BLUETOOTH", "MOUSE", "LAYOUT", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
         Button settingsTool = null;
         Button mouseTool = null;
+        Button layoutTool = null;
         bluetoothButton = null;
         for (String toolName : toolNames) {
             Button tool = new Button(this);
@@ -241,6 +255,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             if ("SETTINGS".equals(toolName)) settingsTool = tool;
             else if ("BLUETOOTH".equals(toolName)) bluetoothButton = tool;
             else if ("MOUSE".equals(toolName)) mouseTool = tool;
+            else if ("LAYOUT".equals(toolName)) layoutTool = tool;
             else if ("VOL -".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 1));
             else if ("VOL +".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 2));
             else if ("MEDIA".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 3));
@@ -253,13 +268,13 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             mouseToggle.setOnClickListener(v -> {
                 boolean visible = mouseOverlay.getVisibility() == View.VISIBLE;
                 mouseOverlay.setVisibility(visible ? View.GONE : View.VISIBLE);
-                if (mouseCursor != null) {
-                    mouseCursor.setVisibility(visible ? View.GONE : View.VISIBLE);
-                    if (!visible) mouseCursor.resetCursor();
-                }
                 mouseToggle.setText(visible ? "MOUSE" : "MOUSE: ON");
                 if (visible) mouseOverlay.releaseAllInputs();
             });
+        }
+        layoutToolButton = layoutTool;
+        if (layoutToolButton != null) {
+            layoutToolButton.setOnClickListener(v -> toggleLayoutEditMode(layoutToolButton));
         }
         toolsScroll.addView(toolsBar);
         FrameLayout.LayoutParams toolsParams = new FrameLayout.LayoutParams(
@@ -367,7 +382,9 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private synchronized void startReceiving(Surface surface) {
         if (surface == null || !surface.isValid() || running) return;
         running = true;
-        receiveThread = new Thread(() -> receiveLoop(surface), "OfflineMirror-Viewer");
+        long generation = ++receiveGeneration;
+        receiveThread = new Thread(
+                () -> receiveLoop(surface, generation), "OfflineMirror-Viewer");
         receiveThread.start();
     }
 
@@ -525,7 +542,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         panel.setPadding(dp(18), dp(10), dp(18), dp(4));
         panel.setOrientation(LinearLayout.VERTICAL);
         TextView mappingInfo = new TextView(this);
-        mappingInfo.setText("Mapping Android Standard: A, B, X, Y, L1, R1, L2, R2, Select, Start, D-pad, L3/R3 axis click jika didukung, dua analog");
+        mappingInfo.setText("Mapping Android Standard: A, B, X, Y, L1, R1, L2, R2, Select, Start, D-pad, dua analog. Gunakan tombol LAYOUT di toolbar untuk menggeser seluruh susunan gamepad dan mouse.");
         mappingInfo.setTextSize(12);
         panel.addView(mappingInfo);
         TextView presetLabel = new TextView(this);
@@ -733,86 +750,81 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
     }
 
-    private void receiveLoop(Surface surface) {
-        MediaCodec decoder = null;
-        DataInputStream input = null;
-        long decodedFrames = 0;
-        long receivedBytes = 0;
-        long metricWindowStart = SystemClock.elapsedRealtime();
-        long metricFramesStart = 0;
-        long metricBytesStart = 0;
-        try {
-            videoSocket = new Socket();
-            videoSocket.setTcpNoDelay(true);
-            // Small socket receive window limits stale-frame queueing on Wi-Fi/hotspot.
-            videoSocket.setReceiveBufferSize(lowLatencyMode ? 24 * 1024 : 64 * 1024);
-            videoSocket.connect(new InetSocketAddress(host, videoPort), 10_000);
-            authenticateSocket(videoSocket);
-            input = new DataInputStream(
-                    new BufferedInputStream(videoSocket.getInputStream(), 8 * 1024));
+    private void receiveLoop(Surface surface, long generation) {
+        while (isReceiveActive(generation, surface)) {
+            MediaCodec decoder = null;
+            DataInputStream input = null;
+            Socket socket = new Socket();
+            long decodedFrames = 0;
+            long receivedBytes = 0;
+            long metricWindowStart = SystemClock.elapsedRealtime();
+            long metricFramesStart = 0;
+            long metricBytesStart = 0;
+            try {
+                videoSocket = socket;
+                socket.setTcpNoDelay(true);
+                socket.setKeepAlive(true);
+                socket.setReceiveBufferSize(lowLatencyMode ? 96 * 1024 : 256 * 1024);
+                // A stalled TCP stream is recovered by reconnecting instead of leaving
+                // a black/frozen Viewer on screen indefinitely.
+                socket.setSoTimeout(15_000);
+                socket.connect(new InetSocketAddress(host, videoPort), 10_000);
+                authenticateSocket(socket);
+                input = new DataInputStream(
+                        new BufferedInputStream(socket.getInputStream(), 32 * 1024));
 
-            StreamConfig config = readStreamHeader(input);
-            setStreamDimensions(config);
-            decoder = createDecoder(config, surface);
-            videoStatus = "Decoder siap " + config.width + " × " + config.height
-                    + ". Menunggu frame...";
-            updateStatus();
+                StreamConfig config = readStreamHeader(input);
+                setStreamDimensions(config);
+                decoder = createDecoder(config, surface);
+                videoStatus = "Decoder siap " + config.width + " × " + config.height;
+                updateStatus();
+                if (audioEnabled) startAudioPlayback();
 
-            if (audioEnabled) startAudioPlayback();
+                MediaCodec.BufferInfo outputInfo = new MediaCodec.BufferInfo();
+                while (isReceiveActive(generation, surface) && !socket.isClosed()) {
+                    int size = input.readInt();
+                    if (size == -1) {
+                        decoder = releaseDecoder(decoder);
+                        config = readStreamHeader(input);
+                        setStreamDimensions(config);
+                        decoder = createDecoder(config, surface);
+                        videoStatus = "Stream diperbarui " + config.width + " × " + config.height;
+                        updateStatus();
+                        continue;
+                    }
 
-            MediaCodec.BufferInfo outputInfo = new MediaCodec.BufferInfo();
-            while (running) {
-                int size = input.readInt();
+                    int flags = input.readInt();
+                    long presentationTimeUs = input.readLong();
+                    if (size <= 0 || size > 8 * 1024 * 1024) {
+                        throw new IllegalStateException("Ukuran paket H.264 tidak valid: " + size);
+                    }
+                    byte[] packet = new byte[size];
+                    input.readFully(packet);
+                    receivedBytes += size;
+                    if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+                            && (config.csd0.length > 0 || config.csd1.length > 0)) {
+                        continue;
+                    }
 
-                // Kept for protocol compatibility. The app is portrait-locked, so
-                // the Host should normally send only one fixed-size stream header.
-                if (size == -1) {
-                    decoder = releaseDecoder(decoder);
-                    config = readStreamHeader(input);
-                    setStreamDimensions(config);
-                    decoder = createDecoder(config, surface);
-                    videoStatus = "Stream baru " + config.width + " × " + config.height;
-                    updateStatus();
-                    continue;
-                }
+                    // Never wait for a decoder input slot while leaving decoded output
+                    // buffers queued. Some Mali/MediaTek decoders starve in that state.
+                    int inputIndex = decoder.dequeueInputBuffer(5_000);
+                    while (isReceiveActive(generation, surface) && inputIndex < 0) {
+                        decodedFrames += drainDecoderOutputs(decoder, outputInfo, 5_000);
+                        inputIndex = decoder.dequeueInputBuffer(5_000);
+                    }
+                    if (!isReceiveActive(generation, surface) || inputIndex < 0) break;
 
-                int flags = input.readInt();
-                long presentationTimeUs = input.readLong();
-                if (size <= 0 || size > 8 * 1024 * 1024) {
-                    throw new IllegalStateException("Ukuran paket H.264 tidak valid: " + size);
-                }
+                    ByteBuffer inputBuffer = decoder.getInputBuffer(inputIndex);
+                    if (inputBuffer == null || packet.length > inputBuffer.capacity()) {
+                        throw new IllegalStateException("Buffer input decoder terlalu kecil");
+                    }
+                    inputBuffer.clear();
+                    inputBuffer.put(packet);
+                    decoder.queueInputBuffer(inputIndex, 0, packet.length,
+                            presentationTimeUs, flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM);
 
-                byte[] packet = new byte[size];
-                input.readFully(packet);
-                receivedBytes += size;
-
-                // The Host transports SPS/PPS in the stream header, not as packets.
-                if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
-                        && (config.csd0.length > 0 || config.csd1.length > 0)) {
-                    continue;
-                }
-
-                int inputIndex = decoder.dequeueInputBuffer(1_000);
-                while (running && inputIndex < 0) {
-                    inputIndex = decoder.dequeueInputBuffer(1_000);
-                }
-                if (!running || inputIndex < 0) break;
-
-                ByteBuffer inputBuffer = decoder.getInputBuffer(inputIndex);
-                if (inputBuffer == null || packet.length > inputBuffer.capacity()) {
-                    throw new IllegalStateException("Buffer input decoder terlalu kecil");
-                }
-                inputBuffer.clear();
-                inputBuffer.put(packet);
-                decoder.queueInputBuffer(inputIndex, 0, packet.length,
-                        presentationTimeUs, flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-
-                // Drain every decoded output. Surface decoders must be given every
-                // output buffer for rendering; do not gate render=true on BufferInfo.size.
-                int outputIndex = decoder.dequeueOutputBuffer(outputInfo, 1_000);
-                while (outputIndex >= 0 && running) {
-                    decoder.releaseOutputBuffer(outputIndex, true);
-                    decodedFrames++;
+                    decodedFrames += drainDecoderOutputs(decoder, outputInfo, 1_000);
                     long metricNow = SystemClock.elapsedRealtime();
                     if (metricNow - metricWindowStart >= 1000L) {
                         long elapsed = Math.max(1L, metricNow - metricWindowStart);
@@ -828,26 +840,113 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                         metricBytesStart = receivedBytes;
                         updateStatus();
                     }
-                    outputIndex = decoder.dequeueOutputBuffer(outputInfo, 0);
                 }
-                if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    android.util.Log.i("OfflineMirror",
-                            "Decoder output format: " + decoder.getOutputFormat());
+            } catch (Exception error) {
+                if (isReceiveActive(generation, surface)) {
+                    android.util.Log.w("OfflineMirror", "Viewer video connection will retry", error);
+                    videoStatus = "Video terputus • menyambungkan ulang...";
+                    updateStatus();
+                }
+            } finally {
+                try { if (input != null) input.close(); } catch (Exception ignored) {}
+                try { socket.close(); } catch (Exception ignored) {}
+                if (videoSocket == socket) videoSocket = null;
+                releaseDecoder(decoder);
+            }
+
+            if (isReceiveActive(generation, surface)) {
+                try { Thread.sleep(750L); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
                 }
             }
-        } catch (Exception error) {
-            android.util.Log.e("OfflineMirror", "Viewer H.264 pipeline failed", error);
-            if (running) {
-                videoStatus = "Video gagal: " + error.getClass().getSimpleName()
-                        + " • " + error.getMessage();
-                updateStatus();
+        }
+        if (generation == receiveGeneration) running = false;
+        // The Surface is owned by this receive generation and is released only
+        // after its decoder has stopped, never on an ordinary network reconnect.
+        try { surface.release(); } catch (Exception ignored) {}
+    }
+
+    private boolean isReceiveActive(long generation, Surface surface) {
+        return running && generation == receiveGeneration
+                && surface != null && surface.isValid();
+    }
+
+    private int drainDecoderOutputs(MediaCodec decoder,
+                                    MediaCodec.BufferInfo outputInfo,
+                                    long firstTimeoutUs) {
+        int rendered = 0;
+        long timeoutUs = firstTimeoutUs;
+        while (true) {
+            int outputIndex = decoder.dequeueOutputBuffer(outputInfo, timeoutUs);
+            timeoutUs = 0L;
+            if (outputIndex >= 0) {
+                decoder.releaseOutputBuffer(outputIndex, true);
+                rendered++;
+            } else if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                android.util.Log.i("OfflineMirror",
+                        "Decoder output format: " + decoder.getOutputFormat());
+            } else if (outputIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
+                // Deprecated on modern Android, but harmless for older codec implementations.
+            } else {
+                break;
             }
-        } finally {
-            running = false;
-            try { if (input != null) input.close(); } catch (Exception ignored) {}
-            try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
-            releaseDecoder(decoder);
-            try { surface.release(); } catch (Exception ignored) {}
+        }
+        return rendered;
+    }
+
+    private void moveMouseOverlay(float dx, float dy) {
+        if (videoFrame == null || mouseOverlay == null) return;
+        int maxX = Math.max(0, videoFrame.getWidth() - mouseOverlay.getWidth());
+        int maxY = Math.max(0, videoFrame.getHeight() - mouseOverlay.getHeight());
+        int left = Math.max(0, Math.min(maxX, Math.round(mouseOverlay.getX() + dx)));
+        int top = Math.max(0, Math.min(maxY, Math.round(mouseOverlay.getY() + dy)));
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) mouseOverlay.getLayoutParams();
+        params.gravity = Gravity.TOP | Gravity.LEFT;
+        params.leftMargin = left;
+        params.topMargin = top;
+        videoFrame.updateViewLayout(mouseOverlay, params);
+        mousePositionX = maxX == 0 ? 0f : left / (float) maxX;
+        mousePositionY = maxY == 0 ? 0f : top / (float) maxY;
+        mousePositionSaved = true;
+        getSharedPreferences("offline_mirror_settings", MODE_PRIVATE).edit()
+                .putFloat("mouse_position_x", mousePositionX)
+                .putFloat("mouse_position_y", mousePositionY).apply();
+    }
+
+    private void applyStoredMousePosition() {
+        if (!mousePositionSaved || videoFrame == null || mouseOverlay == null
+                || videoFrame.getWidth() <= 0 || videoFrame.getHeight() <= 0
+                || mouseOverlay.getWidth() <= 0 || mouseOverlay.getHeight() <= 0) return;
+        int maxX = Math.max(0, videoFrame.getWidth() - mouseOverlay.getWidth());
+        int maxY = Math.max(0, videoFrame.getHeight() - mouseOverlay.getHeight());
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) mouseOverlay.getLayoutParams();
+        params.gravity = Gravity.TOP | Gravity.LEFT;
+        params.leftMargin = Math.round(Math.max(0f, Math.min(1f, mousePositionX)) * maxX);
+        params.topMargin = Math.round(Math.max(0f, Math.min(1f, mousePositionY)) * maxY);
+        videoFrame.updateViewLayout(mouseOverlay, params);
+    }
+
+    private void toggleLayoutEditMode(Button button) {
+        layoutEditMode = !layoutEditMode;
+        if (layoutEditMode) {
+            gamepadWasHiddenBeforeLayout = gamepadOverlay.getVisibility() != View.VISIBLE;
+            mouseWasHiddenBeforeLayout = mouseOverlay.getVisibility() != View.VISIBLE;
+            gamepadOverlay.setVisibility(View.VISIBLE);
+            mouseOverlay.setVisibility(View.VISIBLE);
+            gamepadOverlay.setLayoutEditMode(true);
+            mouseOverlay.setLayoutEditMode(true);
+            button.setText("SELESAI");
+            Toast.makeText(this, "Seret gamepad atau panel mouse ke posisi baru.",
+                    Toast.LENGTH_LONG).show();
+        } else {
+            gamepadOverlay.setLayoutEditMode(false);
+            mouseOverlay.setLayoutEditMode(false);
+            if (gamepadWasHiddenBeforeLayout) gamepadOverlay.setVisibility(View.GONE);
+            if (mouseWasHiddenBeforeLayout) mouseOverlay.setVisibility(View.GONE);
+            button.setText("LAYOUT");
+            Toast.makeText(this, "Posisi kontrol disimpan.", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -1029,6 +1128,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
     private void stopReceiving() {
         running = false;
+        receiveGeneration++;
         try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
         try { if (audioSocket != null) audioSocket.close(); } catch (Exception ignored) {}
         // Utility socket stays separate from the video stream.
@@ -1042,6 +1142,18 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         } else {
             if (gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
             if (mouseOverlay != null) mouseOverlay.releaseAllInputs();
+            if (layoutEditMode) {
+                layoutEditMode = false;
+                if (layoutToolButton != null) layoutToolButton.setText("LAYOUT");
+                if (gamepadWasHiddenBeforeLayout && gamepadOverlay != null) {
+                    gamepadOverlay.setVisibility(View.GONE);
+                }
+                if (mouseWasHiddenBeforeLayout && mouseOverlay != null) {
+                    mouseOverlay.setVisibility(View.GONE);
+                }
+            }
+            if (gamepadOverlay != null) gamepadOverlay.setLayoutEditMode(false);
+            if (mouseOverlay != null) mouseOverlay.setLayoutEditMode(false);
         }
     }
 
@@ -1053,6 +1165,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         if (gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
         if (mouseOverlay != null) mouseOverlay.releaseAllInputs();
         if (bluetoothGamepad != null) bluetoothGamepad.stop();
+        if (gamepadOverlay != null) gamepadOverlay.setLayoutEditMode(false);
+        if (mouseOverlay != null) mouseOverlay.setLayoutEditMode(false);
         stopReceiving();
         controlOutput = null;
         try { if (controlSocket != null) controlSocket.close(); } catch (Exception ignored) {}
