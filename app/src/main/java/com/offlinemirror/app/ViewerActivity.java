@@ -238,6 +238,10 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                         && (config.csd0.length > 0 || config.csd1.length > 0)) {
                     continue;
                 }
+                if (receivedPackets == 1) {
+                    videoStatus = "Data H.264 diterima. Menyiapkan frame...";
+                    updateStatus();
+                }
 
                 int inputIndex;
                 do {
@@ -252,8 +256,9 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 }
                 inputBuffer.clear();
                 inputBuffer.put(packet);
-                int decoderFlags = flags & (MediaCodec.BUFFER_FLAG_CODEC_CONFIG
-                        | MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                // The Host sends SPS/PPS in the stream header and omits standalone
+                // codec-config buffers. Only EOS is a valid decoder input flag here.
+                int decoderFlags = flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM;
                 decoder.queueInputBuffer(inputIndex, 0, packet.length,
                         presentationTimeUs, decoderFlags);
 
