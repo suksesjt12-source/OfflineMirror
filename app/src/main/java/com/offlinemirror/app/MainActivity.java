@@ -68,7 +68,7 @@ public class MainActivity extends Activity {
         page.addView(title, matchWrap());
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("Phone-to-phone screen sharing • No internet");
+        subtitle.setText("Phone-to-phone mirroring • Offline • Auto rotate");
         subtitle.setTextColor(Color.rgb(161, 174, 196));
         subtitle.setTextSize(14);
         subtitle.setGravity(Gravity.CENTER);
@@ -157,13 +157,13 @@ public class MainActivity extends Activity {
         statusText = new TextView(this);
         statusText.setTextColor(Color.rgb(159, 177, 203));
         statusText.setTextSize(13);
-        statusText.setText("Ready. Connect both phones to the same local Wi-Fi or hotspot.");
+        statusText.setText("Ready. Connect both phones to the same local Wi-Fi or hotspot. Portrait and landscape are supported.");
         LinearLayout.LayoutParams statusParams = matchWrap();
         statusParams.topMargin = dp(20);
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("How to use: turn on a hotspot or join the same Wi-Fi on both phones. Start sharing on the host phone and approve Android's screen-capture prompt. Enter the host IP on the viewer phone. Internet access is not used.");
+        note.setText("How to use: turn on a hotspot or join the same Wi-Fi on both phones. Start sharing on the host phone and approve Android's screen-capture prompt. Enter the host IP on the viewer phone. Both screens follow their own device orientation automatically. Internet access is not used.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
