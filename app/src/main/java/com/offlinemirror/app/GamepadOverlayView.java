@@ -82,16 +82,29 @@ public final class GamepadOverlayView extends View {
         return value * getResources().getDisplayMetrics().density;
     }
 
-    private float stickCenterX() { return getWidth() * 0.18f; }
-    private float stickCenterY() { return getHeight() * 0.78f; }
-    private float stickRadius() { return Math.min(dp(47), getWidth() * 0.14f); }
+    private boolean isLandscapeLayout() {
+        return getWidth() > getHeight();
+    }
+
+    private float stickCenterX() {
+        return getWidth() * (isLandscapeLayout() ? 0.13f : 0.18f);
+    }
+
+    private float stickCenterY() {
+        return getHeight() * (isLandscapeLayout() ? 0.78f : 0.78f);
+    }
+
+    private float stickRadius() {
+        float shortSide = Math.min(getWidth(), getHeight());
+        return Math.min(dp(isLandscapeLayout() ? 44 : 47), shortSide * 0.14f);
+    }
 
     private float buttonX(int bit) {
         if (bit == BUTTON_A || bit == BUTTON_Y) return getWidth() * 0.82f;
         if (bit == BUTTON_B) return getWidth() * 0.92f;
         if (bit == BUTTON_X) return getWidth() * 0.72f;
-        if (bit == BUTTON_L1) return getWidth() * 0.20f;
-        if (bit == BUTTON_R1) return getWidth() * 0.80f;
+        if (bit == BUTTON_L1) return getWidth() * (isLandscapeLayout() ? 0.13f : 0.20f);
+        if (bit == BUTTON_R1) return getWidth() * (isLandscapeLayout() ? 0.87f : 0.80f);
         if (bit == BUTTON_SELECT) return getWidth() * 0.42f;
         if (bit == BUTTON_START) return getWidth() * 0.58f;
         return getWidth() * 0.78f;
@@ -99,10 +112,14 @@ public final class GamepadOverlayView extends View {
 
     private float buttonY(int bit) {
         if (bit == BUTTON_A) return getHeight() * 0.78f;
-        if (bit == BUTTON_B || bit == BUTTON_X) return getHeight() * 0.86f;
-        if (bit == BUTTON_Y) return getHeight() * 0.70f;
-        if (bit == BUTTON_L1 || bit == BUTTON_R1) return getHeight() * 0.12f;
-        if (bit == BUTTON_SELECT) return getHeight() * 0.12f;
+        if (bit == BUTTON_B || bit == BUTTON_X) return getHeight() * 0.88f;
+        if (bit == BUTTON_Y) return getHeight() * 0.68f;
+        if (bit == BUTTON_L1 || bit == BUTTON_R1) {
+            return getHeight() * (isLandscapeLayout() ? 0.15f : 0.12f);
+        }
+        if (bit == BUTTON_SELECT || bit == BUTTON_START) {
+            return getHeight() * (isLandscapeLayout() ? 0.15f : 0.12f);
+        }
         return getHeight() * 0.12f;
     }
 
@@ -129,10 +146,12 @@ public final class GamepadOverlayView extends View {
         drawAction(canvas, BUTTON_B, "B", dp(19));
         drawAction(canvas, BUTTON_A, "A", dp(19));
 
-        drawPill(canvas, BUTTON_L1, "L1", getWidth() * 0.20f, getHeight() * 0.12f);
-        drawPill(canvas, BUTTON_R1, "R1", getWidth() * 0.80f, getHeight() * 0.12f);
-        drawPill(canvas, BUTTON_SELECT, "SELECT", getWidth() * 0.42f, getHeight() * 0.12f);
-        drawPill(canvas, BUTTON_START, "START", getWidth() * 0.58f, getHeight() * 0.12f);
+        drawPill(canvas, BUTTON_L1, "L1", buttonX(BUTTON_L1), buttonY(BUTTON_L1));
+        drawPill(canvas, BUTTON_R1, "R1", buttonX(BUTTON_R1), buttonY(BUTTON_R1));
+        drawPill(canvas, BUTTON_SELECT, "SELECT",
+                buttonX(BUTTON_SELECT), buttonY(BUTTON_SELECT));
+        drawPill(canvas, BUTTON_START, "START",
+                buttonX(BUTTON_START), buttonY(BUTTON_START));
     }
 
     private void drawAction(Canvas canvas, int bit, String text, float radius) {
@@ -269,6 +288,22 @@ public final class GamepadOverlayView extends View {
 
     private float clamp(float value) {
         return Math.max(0f, Math.min(1f, value));
+    }
+
+    @Override
+    protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight);
+        if (oldWidth == 0 && oldHeight == 0) return;
+
+        // Release any held virtual buttons/stick during a rotation so no input
+        // remains stuck when the overlay changes from portrait to landscape.
+        buttonPointers.clear();
+        buttons = 0;
+        joystickPointer = -1;
+        directPointer = -1;
+        axisX = 0f;
+        axisY = 0f;
+        emitState();
     }
 
     @Override
