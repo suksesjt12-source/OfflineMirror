@@ -87,11 +87,13 @@ public final class GamepadOverlayView extends View {
     private float stickRadius() { return Math.min(dp(47), getWidth() * 0.14f); }
 
     private float buttonX(int bit) {
-        if (bit == BUTTON_A || bit == BUTTON_START) return getWidth() * 0.82f;
+        if (bit == BUTTON_A || bit == BUTTON_Y) return getWidth() * 0.82f;
         if (bit == BUTTON_B) return getWidth() * 0.92f;
         if (bit == BUTTON_X) return getWidth() * 0.72f;
-        if (bit == BUTTON_Y) return getWidth() * 0.82f;
-        if (bit == BUTTON_L1 || bit == BUTTON_SELECT) return getWidth() * 0.22f;
+        if (bit == BUTTON_L1) return getWidth() * 0.20f;
+        if (bit == BUTTON_R1) return getWidth() * 0.80f;
+        if (bit == BUTTON_SELECT) return getWidth() * 0.42f;
+        if (bit == BUTTON_START) return getWidth() * 0.58f;
         return getWidth() * 0.78f;
     }
 
