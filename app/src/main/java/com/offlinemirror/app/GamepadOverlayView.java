@@ -36,6 +36,10 @@ public final class GamepadOverlayView extends View {
     private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Map<Integer, Integer> buttonPointers = new HashMap<>();
     private Listener listener;
+    private float videoLeft;
+    private float videoTop;
+    private float videoWidth = -1f;
+    private float videoHeight = -1f;
 
     private int buttons;
     private int joystickPointer = -1;
@@ -76,6 +80,38 @@ public final class GamepadOverlayView extends View {
 
     public void setListener(Listener listener) {
         this.listener = listener;
+    }
+
+    /**
+     * Defines the actual video image area inside the full-screen overlay.
+     * Direct touch coordinates are normalized against this rectangle, not
+     * against the letterboxed black margins.
+     */
+    public void setVideoContentRect(float left, float top, float width, float height) {
+        videoLeft = left;
+        videoTop = top;
+        videoWidth = Math.max(1f, width);
+        videoHeight = Math.max(1f, height);
+    }
+
+    private boolean isInsideVideoContent(float x, float y) {
+        float left = videoWidth > 0f ? videoLeft : 0f;
+        float top = videoHeight > 0f ? videoTop : 0f;
+        float width = videoWidth > 0f ? videoWidth : Math.max(1f, getWidth());
+        float height = videoHeight > 0f ? videoHeight : Math.max(1f, getHeight());
+        return x >= left && x <= left + width && y >= top && y <= top + height;
+    }
+
+    private float normalizeVideoX(float x) {
+        float left = videoWidth > 0f ? videoLeft : 0f;
+        float width = videoWidth > 0f ? videoWidth : Math.max(1f, getWidth());
+        return clamp((x - left) / width);
+    }
+
+    private float normalizeVideoY(float y) {
+        float top = videoHeight > 0f ? videoTop : 0f;
+        float height = videoHeight > 0f ? videoHeight : Math.max(1f, getHeight());
+        return clamp((y - top) / height);
     }
 
     private float dp(float value) {
@@ -243,7 +279,7 @@ public final class GamepadOverlayView extends View {
             return;
         }
 
-        if (directPointer == -1) {
+        if (directPointer == -1 && isInsideVideoContent(x, y)) {
             directPointer = pointerId;
             directDownX = directLastX = x;
             directDownY = directLastY = y;
@@ -274,10 +310,10 @@ public final class GamepadOverlayView extends View {
 
     private void sendDirectGesture(long eventTime) {
         if (listener == null || getWidth() <= 0 || getHeight() <= 0) return;
-        float x1 = clamp(directDownX / getWidth());
-        float y1 = clamp(directDownY / getHeight());
-        float x2 = clamp(directLastX / getWidth());
-        float y2 = clamp(directLastY / getHeight());
+        float x1 = normalizeVideoX(directDownX);
+        float y1 = normalizeVideoY(directDownY);
+        float x2 = normalizeVideoX(directLastX);
+        float y2 = normalizeVideoY(directLastY);
         long duration = Math.max(1, eventTime - directDownTime);
         float distance = (float) Math.hypot(
                 directLastX - directDownX, directLastY - directDownY);
