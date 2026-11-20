@@ -241,8 +241,12 @@ public final class BluetoothHidGamepadApi28 implements BluetoothProfile.ServiceL
         }
     }
 
+    public boolean isRegistered() {
+        return registered && hid != null;
+    }
+
     public boolean isConnected() {
-        return registered && hid != null && connectedDevice != null;
+        return isRegistered() && connectedDevice != null;
     }
 
     public boolean sendState(int buttons, float leftX, float leftY) {
