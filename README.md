@@ -1,8 +1,12 @@
-# OfflineMirror 1.2.0
+# OfflineMirror 1.3.0
 
 OfflineMirror mirrors a phone screen to another phone over the same local Wi-Fi network or hotspot. The application does not use a cloud server or require internet access after both devices are connected to the local network.
 
-## New in version 1.2.0
+## New in version 1.3.0
+
+- **QR pairing lebih andal:** payload QR berversi, divalidasi, membawa semua port layanan, dan memakai koreksi kesalahan QR.
+- **Alamat IP setiap HP:** Host menampilkan IP lokalnya; Viewer menampilkan IP Viewer dan IP Host secara terpisah. Router/hotspot yang memberikan alamat IP unik pada tiap perangkat.
+- **Koneksi lebih siap:** port video, audio, dan kontrol di-bind sebelum Viewer melakukan pemindaian QR. Opsi reuse diatur sebelum port di-bind.
 
 - **QR pairing:** the Host creates a QR code containing the local IP address, service ports, audio setting, and a random session key. The Viewer scans it with the camera.
 - **Remote touch:** tap, long-press, and swipe gestures on the Viewer can be sent to the Host. The Host owner must manually enable the OfflineMirror Remote Touch Accessibility service in Android Settings. The service does not retrieve window content; it only dispatches gestures received over the authenticated local session.

@@ -28,6 +28,8 @@ import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.ByteBuffer;
@@ -109,6 +111,13 @@ public class MirrorHostService extends Service {
             projection.registerCallback(projectionCallback, new Handler(getMainLooper()));
             running = true;
 
+            // Bind listening ports before the Host displays its pairing QR.
+            videoServerSocket = openServerSocket(VIDEO_PORT);
+            controlServerSocket = openServerSocket(CONTROL_PORT);
+            if (audioEnabled && Build.VERSION.SDK_INT >= 29) {
+                audioServerSocket = openServerSocket(AUDIO_PORT);
+            }
+
             int maxDimension = intent.getIntExtra("maxDimension", 1280);
             int fps = intent.getIntExtra("fps", 30);
             int bitrate = intent.getIntExtra("bitrate", 4_000_000);
@@ -145,8 +154,6 @@ public class MirrorHostService extends Service {
         boolean streamHeaderSent = false;
 
         try {
-            videoServerSocket = new ServerSocket(VIDEO_PORT);
-            videoServerSocket.setReuseAddress(true);
             videoClientSocket = videoServerSocket.accept();
             videoClientSocket.setTcpNoDelay(true);
             output = new DataOutputStream(new BufferedOutputStream(
@@ -216,8 +223,6 @@ public class MirrorHostService extends Service {
     private void serveAudio() {
         DataOutputStream output = null;
         try {
-            audioServerSocket = new ServerSocket(AUDIO_PORT);
-            audioServerSocket.setReuseAddress(true);
             audioClientSocket = audioServerSocket.accept();
             audioClientSocket.setTcpNoDelay(true);
             output = new DataOutputStream(new BufferedOutputStream(
@@ -280,8 +285,6 @@ public class MirrorHostService extends Service {
 
     private void serveControl() {
         try {
-            controlServerSocket = new ServerSocket(CONTROL_PORT);
-            controlServerSocket.setReuseAddress(true);
             controlClientSocket = controlServerSocket.accept();
             controlClientSocket.setTcpNoDelay(true);
 
@@ -315,6 +318,13 @@ public class MirrorHostService extends Service {
         } finally {
             try { if (controlClientSocket != null) controlClientSocket.close(); } catch (Exception ignored) {}
         }
+    }
+
+    private ServerSocket openServerSocket(int port) throws IOException {
+        ServerSocket server = new ServerSocket();
+        server.setReuseAddress(true);
+        server.bind(new InetSocketAddress(port), 1);
+        return server;
     }
 
     private DataInputStream authenticate(Socket socket, DataOutputStream output) throws Exception {

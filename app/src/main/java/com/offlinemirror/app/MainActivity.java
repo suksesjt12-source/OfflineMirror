@@ -37,10 +37,7 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
 
-import java.net.Inet4Address;
-import java.net.NetworkInterface;
-import java.util.Collections;
-import java.util.Enumeration;
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -130,7 +127,8 @@ public class MainActivity extends Activity {
         startButton.setOnClickListener(v -> beginHostFlow());
 
         hostAddress = new TextView(this);
-        hostAddress.setText("Host address: " + getLocalIpv4() + ":" + VIDEO_PORT);
+        hostAddress.setText("Alamat HP ini (IP lokal): " + NetworkAddress.getLocalIpv4(this)
+                + "  •  Port Host: " + VIDEO_PORT);
         hostAddress.setTextColor(Color.rgb(190, 205, 229));
         hostAddress.setTextSize(14);
         hostAddress.setPadding(dp(12), dp(14), dp(12), dp(14));
@@ -153,7 +151,7 @@ public class MainActivity extends Activity {
         copyParams.topMargin = dp(8);
         page.addView(copyButton, copyParams);
         copyButton.setOnClickListener(v -> {
-            String value = getLocalIpv4() + ":" + VIDEO_PORT;
+            String value = NetworkAddress.getLocalIpv4(this) + ":" + VIDEO_PORT;
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("OfflineMirror host", value));
             Toast.makeText(this, "Host address copied", Toast.LENGTH_SHORT).show();
@@ -251,94 +249,117 @@ public class MainActivity extends Activity {
     private void connectToHost() {
         String host = addressInput.getText().toString().trim();
         String key = keyInput.getText().toString().trim();
-        if (host.isEmpty()) {
-            addressInput.setError("Enter or scan the Host address");
+        if (!NetworkAddress.isValidIpv4(host)) {
+            addressInput.setError("Masukkan IP lokal Host, atau scan QR pairing.");
             return;
         }
-        if (key.length() < 16) {
-            keyInput.setError("Scan the Host QR code to get the pairing key");
+        if (!isValidSessionKey(key)) {
+            keyInput.setError("Scan QR Host untuk mendapatkan pairing key yang valid.");
             return;
         }
+        launchViewer(host, key, Build.VERSION.SDK_INT >= 29, VIDEO_PORT, AUDIO_PORT, CONTROL_PORT);
+    }
+
+    private void launchViewer(String host, String key, boolean audio,
+                              int videoPort, int audioPort, int controlPort) {
         Intent viewer = new Intent(this, ViewerActivity.class);
         viewer.putExtra("host", host);
         viewer.putExtra("sessionKey", key);
-        viewer.putExtra("audioEnabled", Build.VERSION.SDK_INT >= 29);
+        viewer.putExtra("audioEnabled", audio);
+        viewer.putExtra("videoPort", videoPort);
+        viewer.putExtra("audioPort", audioPort);
+        viewer.putExtra("controlPort", controlPort);
         startActivity(viewer);
     }
 
+    private boolean isValidSessionKey(String key) {
+        return key != null && key.length() >= 16 && key.length() <= 128
+                && key.matches("[A-Za-z0-9_-]+");
+    }
+
+    private int getQrPort(Uri uri, String name, int fallback) {
+        String value = uri.getQueryParameter(name);
+        if (value == null || value.trim().isEmpty()) return fallback;
+        int port = Integer.parseInt(value);
+        if (port < 1 || port > 65535) throw new IllegalArgumentException("Invalid " + name + " port.");
+        return port;
+    }
+
     private void showPairingQr() {
-        String host = getLocalIpv4();
-        if (host.equals("Check Wi-Fi settings")) {
-            Toast.makeText(this, "Connect to Wi-Fi or hotspot first.", Toast.LENGTH_LONG).show();
+        String host = NetworkAddress.getLocalIpv4(this);
+        if (!NetworkAddress.isValidIpv4(host)) {
+            Toast.makeText(this, "IP Wi-Fi/Hotspot belum terdeteksi. Sambungkan ke jaringan yang sama.",
+                    Toast.LENGTH_LONG).show();
             return;
         }
-        String payload = "OFFLINEMIRROR://connect?host=" + Uri.encode(host)
-                + "&video=" + VIDEO_PORT
-                + "&audio=" + AUDIO_PORT
-                + "&control=" + CONTROL_PORT
-                + "&audioEnabled=" + (audioCheck.isChecked() && Build.VERSION.SDK_INT >= 29)
-                + "&key=" + Uri.encode(sessionKey);
-
+        boolean audio = audioCheck.isChecked() && Build.VERSION.SDK_INT >= 29;
+        String payload = new Uri.Builder()
+                .scheme("offlinemirror").authority("connect")
+                .appendQueryParameter("v", "2")
+                .appendQueryParameter("host", host)
+                .appendQueryParameter("device", Build.MODEL == null ? "Android" : Build.MODEL)
+                .appendQueryParameter("video", String.valueOf(VIDEO_PORT))
+                .appendQueryParameter("audio", String.valueOf(AUDIO_PORT))
+                .appendQueryParameter("control", String.valueOf(CONTROL_PORT))
+                .appendQueryParameter("audioEnabled", String.valueOf(audio))
+                .appendQueryParameter("key", sessionKey)
+                .build().toString();
         try {
             Map<EncodeHintType, Object> hints = new HashMap<>();
-            hints.put(EncodeHintType.MARGIN, 2);
-            BitMatrix matrix = new MultiFormatWriter().encode(
-                    payload, BarcodeFormat.QR_CODE, 720, 720, hints);
-            int[] pixels = new int[720 * 720];
-            for (int y = 0; y < 720; y++) {
-                for (int x = 0; x < 720; x++) {
-                    pixels[y * 720 + x] = matrix.get(x, y) ? Color.BLACK : Color.WHITE;
-                }
+            hints.put(EncodeHintType.MARGIN, 4);
+            hints.put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.M);
+            hints.put(EncodeHintType.CHARACTER_SET, "UTF-8");
+            BitMatrix matrix = new MultiFormatWriter().encode(payload, BarcodeFormat.QR_CODE, 800, 800, hints);
+            int[] pixels = new int[800 * 800];
+            for (int y = 0; y < 800; y++) {
+                for (int x = 0; x < 800; x++) pixels[y * 800 + x] = matrix.get(x, y) ? Color.BLACK : Color.WHITE;
             }
-            Bitmap qr = Bitmap.createBitmap(pixels, 720, 720, Bitmap.Config.ARGB_8888);
+            Bitmap qr = Bitmap.createBitmap(pixels, 800, 800, Bitmap.Config.ARGB_8888);
             ImageView image = new ImageView(this);
             image.setImageBitmap(qr);
-            image.setAdjustViewBounds(true);
-            image.setPadding(dp(12), dp(12), dp(12), dp(12));
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            image.setBackgroundColor(Color.WHITE);
+            image.setPadding(dp(8), dp(8), dp(8), dp(8));
             TextView details = new TextView(this);
-            details.setText("Host: " + host + ":" + VIDEO_PORT
-                    + "\nPairing key is embedded in this QR. Keep it private.");
+            details.setText("Perangkat Host: " + Build.MODEL
+                    + "\\nIP Host: " + host + ":" + VIDEO_PORT
+                    + "\\nIP Viewer ditampilkan di HP pemindai."
+                    + "\\nKode pairing berlaku selama sesi ini. Jaga kerahasiaannya.");
             details.setTextColor(Color.rgb(210, 218, 232));
-            details.setPadding(dp(12), 0, dp(12), dp(12));
+            details.setPadding(dp(12), dp(4), dp(12), dp(12));
             LinearLayout content = new LinearLayout(this);
             content.setOrientation(LinearLayout.VERTICAL);
             content.setBackgroundColor(Color.rgb(18, 26, 40));
-            content.addView(image, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(300)));
+            content.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320)));
             content.addView(details, matchWrap());
-            new AlertDialog.Builder(this)
-                    .setTitle("OfflineMirror pairing")
-                    .setView(content)
-                    .setPositiveButton("Done", null)
-                    .show();
+            new AlertDialog.Builder(this).setTitle("QR Pairing OfflineMirror")
+                    .setView(content).setPositiveButton("Selesai", null).show();
         } catch (Exception error) {
-            Toast.makeText(this, "Could not create QR: " + error.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "QR tidak dapat dibuat: " + error.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
     private void handleScannedQr(String contents) {
         try {
-            Uri uri = Uri.parse(contents);
+            Uri uri = Uri.parse(contents == null ? "" : contents.trim());
             if (!"offlinemirror".equalsIgnoreCase(uri.getScheme())
                     || !"connect".equalsIgnoreCase(uri.getHost())) {
-                throw new IllegalArgumentException("This is not an OfflineMirror pairing code.");
+                throw new IllegalArgumentException("QR ini bukan QR pairing OfflineMirror.");
             }
             String host = uri.getQueryParameter("host");
             String key = uri.getQueryParameter("key");
+            if (!NetworkAddress.isValidIpv4(host)) throw new IllegalArgumentException("Alamat IP Host tidak valid.");
+            if (!isValidSessionKey(key)) throw new IllegalArgumentException("Pairing key tidak valid.");
+            int videoPort = getQrPort(uri, "video", VIDEO_PORT);
+            int audioPort = getQrPort(uri, "audio", AUDIO_PORT);
+            int controlPort = getQrPort(uri, "control", CONTROL_PORT);
             boolean audio = Boolean.parseBoolean(uri.getQueryParameter("audioEnabled"));
-            if (host == null || key == null || key.length() < 16) {
-                throw new IllegalArgumentException("The pairing QR is incomplete.");
-            }
             addressInput.setText(host);
             keyInput.setText(key);
-            Toast.makeText(this, "Paired with " + host + (audio ? " • audio enabled" : ""), Toast.LENGTH_SHORT).show();
-            Intent viewer = new Intent(this, ViewerActivity.class);
-            viewer.putExtra("host", host);
-            viewer.putExtra("sessionKey", key);
-            viewer.putExtra("audioEnabled", audio);
-            startActivity(viewer);
+            Toast.makeText(this, "QR Host terdeteksi: " + host, Toast.LENGTH_SHORT).show();
+            launchViewer(host, key, audio, videoPort, audioPort, controlPort);
         } catch (Exception error) {
-            Toast.makeText(this, "Invalid pairing QR: " + error.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "QR pairing gagal: " + error.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -413,28 +434,13 @@ public class MainActivity extends Activity {
         if (statusText != null) statusText.setText(message);
     }
 
-    private String getLocalIpv4() {
-        try {
-            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            String fallback = null;
-            for (NetworkInterface network : Collections.list(interfaces)) {
-                if (!network.isUp() || network.isLoopback()) continue;
-                String name = network.getName().toLowerCase();
-                for (java.net.InetAddress address : Collections.list(network.getInetAddresses())) {
-                    if (!(address instanceof Inet4Address) || address.isLoopbackAddress()) continue;
-                    String ip = address.getHostAddress();
-                    if (address.isSiteLocalAddress()) {
-                        if (name.contains("wlan") || name.contains("wifi") || name.contains("ap")) {
-                            return ip;
-                        }
-                        if (fallback == null) fallback = ip;
-                    }
-                }
-            }
-            if (fallback != null) return fallback;
-        } catch (Exception ignored) {
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (hostAddress != null) {
+            hostAddress.setText("Alamat HP ini (IP lokal): "
+                    + NetworkAddress.getLocalIpv4(this) + "  •  Port Host: " + VIDEO_PORT);
         }
-        return "Check Wi-Fi settings";
     }
 
     @Override
@@ -471,7 +477,8 @@ public class MainActivity extends Activity {
         } else {
             startService(service);
         }
-        hostAddress.setText("Host address: " + getLocalIpv4() + ":" + VIDEO_PORT);
+        hostAddress.setText("Alamat HP ini (IP lokal): " + NetworkAddress.getLocalIpv4(this)
+                + "  •  Port Host: " + VIDEO_PORT);
         setStatus("Host is starting. Show the pairing QR to connect a Viewer.");
         showPairingQr();
     }

@@ -37,6 +37,10 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private String host;
     private String sessionKey;
     private boolean audioEnabled;
+    private int videoPort = VIDEO_PORT;
+    private int audioPort = AUDIO_PORT;
+    private int controlPort = CONTROL_PORT;
+    private String viewerAddress = "IP belum tersedia";
     private volatile boolean running = false;
     private volatile Socket videoSocket;
     private volatile Socket audioSocket;
@@ -63,6 +67,10 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         host = getIntent().getStringExtra("host");
         sessionKey = getIntent().getStringExtra("sessionKey");
         audioEnabled = getIntent().getBooleanExtra("audioEnabled", false);
+        videoPort = getIntent().getIntExtra("videoPort", VIDEO_PORT);
+        audioPort = getIntent().getIntExtra("audioPort", AUDIO_PORT);
+        controlPort = getIntent().getIntExtra("controlPort", CONTROL_PORT);
+        viewerAddress = NetworkAddress.getLocalIpv4(this);
         getWindow().setStatusBarColor(Color.BLACK);
         getWindow().setNavigationBarColor(Color.BLACK);
         enableImmersiveViewer();
@@ -73,11 +81,12 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
         status = new TextView(this);
         status.setTextColor(Color.WHITE);
-        status.setTextSize(12);
+        status.setTextSize(11);
+        status.setMaxLines(3);
         status.setGravity(Gravity.CENTER_VERTICAL);
         status.setPadding(dp(12), dp(5), dp(12), dp(5));
         root.addView(status, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
 
         surfaceView = new SurfaceView(this);
         surfaceView.setBackgroundColor(Color.BLACK);
@@ -126,7 +135,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         try {
             videoSocket = new Socket();
             videoSocket.setTcpNoDelay(true);
-            videoSocket.connect(new InetSocketAddress(host, VIDEO_PORT), 10_000);
+            videoSocket.connect(new InetSocketAddress(host, videoPort), 10_000);
 
             DataOutputStream authOutput = new DataOutputStream(
                     new BufferedOutputStream(videoSocket.getOutputStream()));
@@ -209,7 +218,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         try {
             controlSocket = new Socket();
             controlSocket.setTcpNoDelay(true);
-            controlSocket.connect(new InetSocketAddress(host, CONTROL_PORT), 8_000);
+            controlSocket.connect(new InetSocketAddress(host, controlPort), 8_000);
             DataOutputStream output = new DataOutputStream(
                     new BufferedOutputStream(controlSocket.getOutputStream()));
             DataInputStream input = new DataInputStream(
@@ -291,7 +300,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         try {
             audioSocket = new Socket();
             audioSocket.setTcpNoDelay(true);
-            audioSocket.connect(new InetSocketAddress(host, AUDIO_PORT), 12_000);
+            audioSocket.connect(new InetSocketAddress(host, audioPort), 12_000);
 
             DataOutputStream authOutput = new DataOutputStream(
                     new BufferedOutputStream(audioSocket.getOutputStream()));
@@ -410,7 +419,9 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private void updateStatus() {
         runOnUiThread(() -> {
             if (status != null) {
-                status.setText(videoStatus + "  •  " + controlStatus + "  •  " + audioStatus);
+                status.setText("HP ini (Viewer): " + viewerAddress
+                        + "   |   IP Host: " + host + "\\n"
+                        + videoStatus + "  •  " + controlStatus + "  •  " + audioStatus);
             }
         });
     }
