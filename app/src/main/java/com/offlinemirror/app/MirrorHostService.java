@@ -504,7 +504,6 @@ public class MirrorHostService extends Service {
             this.projection = projection;
         }
 
-        @androidx.annotation.RequiresApi(29)
         android.media.AudioPlaybackCaptureConfiguration build() {
             return new android.media.AudioPlaybackCaptureConfiguration.Builder(projection)
                     .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
