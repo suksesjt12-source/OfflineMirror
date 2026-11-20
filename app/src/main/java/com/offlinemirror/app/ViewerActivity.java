@@ -35,6 +35,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private SurfaceView surfaceView;
     private TextView status;
     private String host;
+    private String sessionKey = "";
     private boolean audioEnabled;
     private int videoPort = VIDEO_PORT;
     private int audioPort = AUDIO_PORT;
@@ -64,6 +65,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         host = getIntent().getStringExtra("host");
+        sessionKey = getIntent().getStringExtra("sessionKey");
         audioEnabled = getIntent().getBooleanExtra("audioEnabled", false);
         videoPort = getIntent().getIntExtra("videoPort", VIDEO_PORT);
         audioPort = getIntent().getIntExtra("audioPort", AUDIO_PORT);
@@ -135,6 +137,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             videoSocket = new Socket();
             videoSocket.setTcpNoDelay(true);
             videoSocket.connect(new InetSocketAddress(host, videoPort), 10_000);
+            authenticateSocket(videoSocket);
             videoStatus = "Terhubung. Menunggu encoder Host...";
             updateStatus();
 
@@ -189,7 +192,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 }
                 inputBuffer.clear();
                 inputBuffer.put(packet);
-                int decoderFlags = flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM;
+                int decoderFlags = flags & (MediaCodec.BUFFER_FLAG_CODEC_CONFIG
+                        | MediaCodec.BUFFER_FLAG_END_OF_STREAM);
                 decoder.queueInputBuffer(inputIndex, 0, packet.length,
                         presentationTimeUs, decoderFlags);
 
@@ -219,6 +223,15 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         }
     }
 
+    private void authenticateSocket(Socket socket) throws Exception {
+        if (sessionKey == null || sessionKey.length() < 16) {
+            throw new IllegalStateException("Pairing key tidak tersedia. Scan ulang QR Host.");
+        }
+        DataOutputStream auth = new DataOutputStream(socket.getOutputStream());
+        auth.writeUTF(sessionKey);
+        auth.flush();
+    }
+
     private void connectControl() {
         try {
             controlSocket = new Socket();
@@ -226,6 +239,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             controlSocket.connect(new InetSocketAddress(host, controlPort), 8_000);
             DataOutputStream output = new DataOutputStream(
                     new BufferedOutputStream(controlSocket.getOutputStream()));
+            output.writeUTF(sessionKey);
+            output.flush();
             controlOutput = output;
             controlStatus = "Touch: ready";
         } catch (Exception error) {
@@ -301,6 +316,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             audioSocket = new Socket();
             audioSocket.setTcpNoDelay(true);
             audioSocket.connect(new InetSocketAddress(host, audioPort), 12_000);
+            authenticateSocket(audioSocket);
 
             input = new DataInputStream(new BufferedInputStream(audioSocket.getInputStream(), 32 * 1024));
 
@@ -374,9 +390,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         }
         byte[] csd0 = readConfig(input);
         byte[] csd1 = readConfig(input);
-        if (csd0.length == 0 && csd1.length == 0) {
-            throw new IllegalStateException("Host mengirim konfigurasi H.264 kosong");
-        }
+        // Some hardware encoders send SPS/PPS as a separate codec-config buffer.
+        // The decoder accepts that buffer after it has been configured.
         return new StreamConfig(width, height, csd0, csd1);
     }
 

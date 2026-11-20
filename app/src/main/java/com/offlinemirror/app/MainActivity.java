@@ -8,9 +8,11 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
+import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Gravity;
@@ -20,6 +22,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -28,10 +31,22 @@ import android.widget.Toast;
 
 
 import java.util.UUID;
+import java.util.HashMap;
+import java.util.Map;
+
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.EncodeHintType;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.QRCodeWriter;
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
+import com.journeyapps.barcodescanner.CaptureActivity;
+import com.journeyapps.zxing.integration.android.IntentIntegrator;
+import com.journeyapps.zxing.integration.android.IntentResult;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_CAPTURE = 4101;
     private static final int REQUEST_AUDIO = 4102;
+    private static final int REQUEST_CAMERA = 4103;
     private static final int VIDEO_PORT = 48888;
     private static final int AUDIO_PORT = 48889;
     private static final int CONTROL_PORT = 48890;
@@ -47,6 +62,8 @@ public class MainActivity extends Activity {
     private TextView statusText;
     private CheckBox viewerAudioCheck;
     private Button connectButton;
+    private Button showQrButton;
+    private Button scanQrButton;
     private String sessionKey = "";
 
     private int dp(float value) {
@@ -140,7 +157,7 @@ public class MainActivity extends Activity {
         copyParams.topMargin = dp(8);
         page.addView(copyButton, copyParams);
         copyButton.setOnClickListener(v -> {
-            String value = NetworkAddress.getLocalIpv4(this) + ":" + VIDEO_PORT;
+            String value = NetworkAddress.getLocalIpv4(this);
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("OfflineMirror host", value));
             Toast.makeText(this, "Host address copied", Toast.LENGTH_SHORT).show();
@@ -160,6 +177,13 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "Pairing key disalin. Bagikan hanya ke Viewer yang dipercaya.",
                     Toast.LENGTH_LONG).show();
         });
+
+        showQrButton = makeButton("SHOW PAIRING QR", Color.rgb(43, 83, 132));
+        showQrButton.setEnabled(false);
+        LinearLayout.LayoutParams showQrParams = matchWrap();
+        showQrParams.topMargin = dp(8);
+        page.addView(showQrButton, showQrParams);
+        showQrButton.setOnClickListener(v -> showHostQr());
 
         Button accessibilityButton = makeButton("ENABLE REMOTE TOUCH ON THIS PHONE", Color.rgb(91, 72, 132));
         LinearLayout.LayoutParams accessibilityParams = matchWrap();
@@ -183,6 +207,7 @@ public class MainActivity extends Activity {
             stopService(new Intent(this, MirrorHostService.class));
             sessionKey = "";
             if (hostKeyText != null) hostKeyText.setText("Pairing key: tidak aktif");
+            if (showQrButton != null) showQrButton.setEnabled(false);
             setStatus("Sharing dihentikan. Pairing key sebelumnya sudah tidak berlaku.");
         });
 
@@ -217,15 +242,21 @@ public class MainActivity extends Activity {
         page.addView(connectButton, connectParams);
         connectButton.setOnClickListener(v -> connectToHost());
 
+        scanQrButton = makeButton("SCAN HOST QR", Color.rgb(43, 83, 132));
+        LinearLayout.LayoutParams scanParams = matchWrap();
+        scanParams.topMargin = dp(8);
+        page.addView(scanQrButton, scanParams);
+        scanQrButton.setOnClickListener(v -> startQrScanner());
+
         statusText = new TextView(this);
         statusText.setTextColor(Color.rgb(159, 177, 203));
-        statusText.setText("Hubungkan kedua HP ke Wi-Fi/hotspot yang sama. Masukkan IP Host dan pairing key secara manual.");
+        statusText.setText("Hubungkan kedua HP ke Wi-Fi/hotspot yang sama. Scan QR dari HP Host atau masukkan IP dan pairing key.");
         LinearLayout.LayoutParams statusParams = matchWrap();
         statusParams.topMargin = dp(20);
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("Tanpa QR dan tanpa pemindaian kamera. Salin IP Host serta pairing key dari HP Host, lalu masukkan di Viewer. Remote touch memerlukan izin Accessibility dari pemilik Host. Audio capture memerlukan Android 10+ dan dapat diblokir oleh aplikasi tertentu.");
+        note.setText("QR berisi IP, port, dan pairing key sesi Host. Scan hanya QR dari HP yang Anda percaya. Remote touch memerlukan izin Accessibility dari pemilik Host. Audio capture memerlukan Android 10+ dan dapat diblokir oleh aplikasi tertentu.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
@@ -234,6 +265,128 @@ public class MainActivity extends Activity {
         page.addView(note, noteParams);
 
         setContentView(scroll);
+    }
+
+    private void startQrScanner() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
+            return;
+        }
+        launchQrScanner();
+    }
+
+    private void launchQrScanner() {
+        try {
+            IntentIntegrator scanner = new IntentIntegrator(this);
+            scanner.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE);
+            scanner.setPrompt("Arahkan kamera ke QR OfflineMirror dari HP Host");
+            scanner.setBeepEnabled(false);
+            scanner.setOrientationLocked(false);
+            scanner.setCaptureActivity(CaptureActivity.class);
+            scanner.initiateScan();
+        } catch (Exception error) {
+            Toast.makeText(this, "Pemindai QR tidak dapat dibuka: " + error.getMessage(),
+                    Toast.LENGTH_LONG).show();
+            android.util.Log.e("OfflineMirror", "Could not open QR scanner", error);
+        }
+    }
+
+    private boolean applyHostQr(String raw) {
+        try {
+            Uri payload = Uri.parse(raw);
+            if (!"offlinemirror".equalsIgnoreCase(payload.getScheme())
+                    || !"connect".equalsIgnoreCase(payload.getHost())) {
+                throw new IllegalArgumentException("QR bukan QR koneksi OfflineMirror");
+            }
+            String host = payload.getQueryParameter("host");
+            String portText = payload.getQueryParameter("port");
+            String key = payload.getQueryParameter("key");
+            int port = Integer.parseInt(portText == null ? "-1" : portText);
+            if (!NetworkAddress.isValidIpv4(host) || port != VIDEO_PORT
+                    || !isValidSessionKey(key)) {
+                throw new IllegalArgumentException("Data Host pada QR tidak valid");
+            }
+            addressInput.setText(host);
+            keyInput.setText(key);
+            return true;
+        } catch (Exception error) {
+            Toast.makeText(this, "QR tidak valid: " + error.getMessage(),
+                    Toast.LENGTH_LONG).show();
+            android.util.Log.w("OfflineMirror", "Rejected QR payload", error);
+            return false;
+        }
+    }
+
+    private void showHostQr() {
+        if (sessionKey.isEmpty()) {
+            Toast.makeText(this, "Mulai screen sharing terlebih dahulu.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String ip = NetworkAddress.getLocalIpv4(this);
+        if (!NetworkAddress.isValidIpv4(ip)) {
+            Toast.makeText(this, "IP Wi-Fi belum tersedia. Hubungkan HP ke Wi-Fi/hotspot dahulu.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        String payload = new Uri.Builder()
+                .scheme("offlinemirror")
+                .authority("connect")
+                .appendQueryParameter("host", ip)
+                .appendQueryParameter("port", String.valueOf(VIDEO_PORT))
+                .appendQueryParameter("key", sessionKey)
+                .build().toString();
+
+        try {
+            Bitmap qr = createQrBitmap(payload, 640);
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            content.setGravity(Gravity.CENTER);
+            content.setPadding(dp(16), dp(8), dp(16), dp(8));
+
+            ImageView image = new ImageView(this);
+            image.setImageBitmap(qr);
+            image.setBackgroundColor(Color.WHITE);
+            image.setAdjustViewBounds(true);
+            content.addView(image, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(300)));
+
+            TextView details = new TextView(this);
+            details.setText("Viewer: pilih SCAN HOST QR dan arahkan kamera ke kode ini.\nHost IP: "
+                    + ip + "\nPort video: " + VIDEO_PORT);
+            details.setTextColor(Color.DKGRAY);
+            details.setTextSize(14);
+            details.setPadding(0, dp(12), 0, 0);
+            content.addView(details, matchWrap());
+
+            new AlertDialog.Builder(this)
+                    .setTitle("OfflineMirror — Pairing QR")
+                    .setView(content)
+                    .setPositiveButton("Tutup", null)
+                    .show();
+        } catch (Exception error) {
+            Toast.makeText(this, "Gagal membuat QR: " + error.getMessage(),
+                    Toast.LENGTH_LONG).show();
+            android.util.Log.e("OfflineMirror", "Could not generate QR", error);
+        }
+    }
+
+    private Bitmap createQrBitmap(String value, int size) throws Exception {
+        Map<EncodeHintType, Object> hints = new HashMap<>();
+        hints.put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.M);
+        hints.put(EncodeHintType.MARGIN, 2);
+        hints.put(EncodeHintType.CHARACTER_SET, "UTF-8");
+        BitMatrix matrix = new QRCodeWriter().encode(
+                value, BarcodeFormat.QR_CODE, size, size, hints);
+        int[] pixels = new int[size * size];
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                pixels[y * size + x] = matrix.get(x, y) ? Color.BLACK : Color.WHITE;
+            }
+        }
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        bitmap.setPixels(pixels, 0, size, 0, 0, size, size);
+        return bitmap;
     }
 
     private void beginHostFlow() {
@@ -364,6 +517,19 @@ public class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+
+        IntentResult scanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
+        if (scanResult != null) {
+            String contents = scanResult.getContents();
+            if (contents == null) {
+                Toast.makeText(this, "Pemindaian QR dibatalkan.", Toast.LENGTH_SHORT).show();
+            } else if (applyHostQr(contents)) {
+                Toast.makeText(this, "QR Host berhasil dibaca. Menghubungkan...", Toast.LENGTH_SHORT).show();
+                connectToHost();
+            }
+            return;
+        }
+
         if (requestCode != REQUEST_CAPTURE) return;
         if (resultCode != RESULT_OK || data == null) {
             setStatus("Screen sharing permission was not granted.");
@@ -375,6 +541,7 @@ public class MainActivity extends Activity {
         int bitrate = new int[]{2, 4, 6}[bitrateSpinner.getSelectedItemPosition()] * 1_000_000;
         sessionKey = UUID.randomUUID().toString().replace("-", "");
         if (hostKeyText != null) hostKeyText.setText("Pairing key: " + sessionKey);
+        if (showQrButton != null) showQrButton.setEnabled(true);
 
         Intent service = new Intent(this, MirrorHostService.class);
         service.putExtra("resultCode", resultCode);
@@ -405,6 +572,12 @@ public class MainActivity extends Activity {
                 audioCheck.setChecked(false);
                 Toast.makeText(this, "Audio permission denied. Starting screen-only mirroring.", Toast.LENGTH_LONG).show();
                 requestScreenCapture();
+            }
+        } else if (requestCode == REQUEST_CAMERA) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                launchQrScanner();
+            } else {
+                Toast.makeText(this, "Izin kamera diperlukan untuk memindai QR.", Toast.LENGTH_LONG).show();
             }
         }
     }

@@ -44,6 +44,7 @@ public class MirrorHostService extends Service {
 
     private volatile boolean running = false;
     private boolean audioEnabled = false;
+    private String sessionKey = "";
 
     private ServerSocket videoServerSocket;
     private ServerSocket audioServerSocket;
@@ -77,6 +78,13 @@ public class MirrorHostService extends Service {
         int resultCode = intent.getIntExtra("resultCode", 0);
         Intent projectionData = getProjectionData(intent);
         audioEnabled = intent.getBooleanExtra("audioEnabled", false);
+        sessionKey = intent.getStringExtra("sessionKey");
+        if (sessionKey == null || sessionKey.length() < 16 || sessionKey.length() > 128
+                || !sessionKey.matches("[A-Za-z0-9_-]+")) {
+            android.util.Log.e("OfflineMirror", "Missing or invalid Host pairing key");
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         if (projectionData == null || resultCode == 0) {
             stopSelf();
             return START_NOT_STICKY;
@@ -152,7 +160,7 @@ public class MirrorHostService extends Service {
         boolean streamHeaderSent = false;
 
         try {
-            videoClientSocket = videoServerSocket.accept();
+            videoClientSocket = acceptAuthenticated(videoServerSocket, "video");
             videoClientSocket.setTcpNoDelay(true);
             output = new DataOutputStream(new BufferedOutputStream(
                     videoClientSocket.getOutputStream(), 256 * 1024));
@@ -174,9 +182,6 @@ public class MirrorHostService extends Service {
                     MediaFormat outputFormat = session.encoder.getOutputFormat();
                     byte[] csd0 = copyBuffer(outputFormat.getByteBuffer("csd-0"));
                     byte[] csd1 = copyBuffer(outputFormat.getByteBuffer("csd-1"));
-                    if (csd0.length == 0 && csd1.length == 0) {
-                        throw new IllegalStateException("H.264 encoder returned an empty codec configuration");
-                    }
                     if (streamHeaderSent) output.writeInt(-1);
                     writeStreamHeader(output, session.width, session.height, csd0, csd1);
                     streamHeaderSent = true;
@@ -185,8 +190,7 @@ public class MirrorHostService extends Service {
                 if (index < 0) continue;
 
                 try {
-                    if (streamHeaderSent && info.size > 0 &&
-                            (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                    if (streamHeaderSent && info.size > 0) {
                         ByteBuffer encoded = session.encoder.getOutputBuffer(index);
                         if (encoded != null) {
                             encoded.position(info.offset);
@@ -194,7 +198,10 @@ public class MirrorHostService extends Service {
                             byte[] packet = new byte[info.size];
                             encoded.get(packet);
                             output.writeInt(packet.length);
-                            output.writeInt(info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                            int packetFlags = info.flags & (MediaCodec.BUFFER_FLAG_CODEC_CONFIG
+                                    | MediaCodec.BUFFER_FLAG_KEY_FRAME
+                                    | MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                            output.writeInt(packetFlags);
                             output.writeLong(info.presentationTimeUs);
                             output.write(packet);
                             output.flush();
@@ -221,7 +228,7 @@ public class MirrorHostService extends Service {
     private void serveAudio() {
         DataOutputStream output = null;
         try {
-            audioClientSocket = audioServerSocket.accept();
+            audioClientSocket = acceptAuthenticated(audioServerSocket, "audio");
             audioClientSocket.setTcpNoDelay(true);
             output = new DataOutputStream(new BufferedOutputStream(
                     audioClientSocket.getOutputStream(), 32 * 1024));
@@ -280,7 +287,7 @@ public class MirrorHostService extends Service {
 
     private void serveControl() {
         try {
-            controlClientSocket = controlServerSocket.accept();
+            controlClientSocket = acceptAuthenticated(controlServerSocket, "control");
             controlClientSocket.setTcpNoDelay(true);
 
             DataInputStream input = new DataInputStream(
@@ -311,6 +318,33 @@ public class MirrorHostService extends Service {
         } finally {
             try { if (controlClientSocket != null) controlClientSocket.close(); } catch (Exception ignored) {}
         }
+    }
+
+    private Socket acceptAuthenticated(ServerSocket server, String channel) throws IOException {
+        while (running) {
+            Socket candidate = server.accept();
+            boolean accepted = false;
+            try {
+                candidate.setSoTimeout(7000);
+                DataInputStream authInput = new DataInputStream(candidate.getInputStream());
+                String suppliedKey = authInput.readUTF();
+                if (sessionKey.equals(suppliedKey)) {
+                    candidate.setSoTimeout(0);
+                    accepted = true;
+                    android.util.Log.i("OfflineMirror", "Authenticated " + channel + " connection");
+                    return candidate;
+                }
+                android.util.Log.w("OfflineMirror", "Rejected " + channel + " connection: key mismatch");
+            } catch (Exception error) {
+                android.util.Log.w("OfflineMirror", "Rejected " + channel
+                        + " connection: " + error.getMessage());
+            } finally {
+                if (!accepted) {
+                    try { candidate.close(); } catch (Exception ignored) {}
+                }
+            }
+        }
+        throw new IOException("Host sharing stopped before " + channel + " pairing completed");
     }
 
     private ServerSocket openServerSocket(int port) throws IOException {
@@ -344,6 +378,8 @@ public class MirrorHostService extends Service {
             if (virtualDisplay == null) {
                 throw new IllegalStateException("Unable to create virtual display");
             }
+            // Request an IDR frame only after the VirtualDisplay is feeding the encoder.
+            requestSyncFrame(encoder);
 
             return new EncoderSession(encoder, virtualDisplay, surface,
                     size[0], size[1], display.getRotation());
@@ -373,12 +409,12 @@ public class MirrorHostService extends Service {
         try {
             nextSurface = nextEncoder.createInputSurface();
             nextEncoder.start();
-            requestSyncFrame(nextEncoder);
 
             old.virtualDisplay.setSurface(null);
             old.releaseEncoderOnly();
             old.virtualDisplay.resize(size[0], size[1], metrics.densityDpi);
             old.virtualDisplay.setSurface(nextSurface);
+            requestSyncFrame(nextEncoder);
 
             return new EncoderSession(nextEncoder, old.virtualDisplay, nextSurface,
                     size[0], size[1], display.getRotation());
@@ -468,6 +504,7 @@ public class MirrorHostService extends Service {
 
     private void stopStreaming() {
         running = false;
+        sessionKey = "";
         closeSockets();
         if (audioRecord != null) {
             try { audioRecord.stop(); } catch (Exception ignored) {}
