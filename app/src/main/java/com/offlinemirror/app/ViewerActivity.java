@@ -48,6 +48,9 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private static final int REQUEST_ENABLE_BT = 7383;
 
     private SurfaceView surfaceView;
+    private FrameLayout videoFrame;
+    private int streamWidth;
+    private int streamHeight;
     private TextView status;
     private TextView gamepadStatus;
     private Button gamepadButton;
@@ -137,10 +140,16 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         root.addView(gamepadBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
 
-        FrameLayout videoFrame = new FrameLayout(this);
+        videoFrame = new FrameLayout(this);
+        videoFrame.setBackgroundColor(Color.BLACK);
         surfaceView = new SurfaceView(this);
-        videoFrame.addView(surfaceView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        FrameLayout.LayoutParams videoSurfaceParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER);
+        videoFrame.addView(surfaceView, videoSurfaceParams);
+        videoFrame.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                               oldLeft, oldTop, oldRight, oldBottom) ->
+                updateVideoSurfaceLayout());
         surfaceView.getHolder().addCallback(this);
 
         gamepadOverlay = new GamepadOverlayView(this);
@@ -489,6 +498,57 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         return Math.max(0f, Math.min(1f, value));
     }
 
+    /**
+     * Keep the decoded image at its source aspect ratio. The black videoFrame
+     * letterboxes the image instead of stretching portrait content across a
+     * landscape SurfaceView (or vice versa).
+     */
+    private void setStreamDimensions(StreamConfig config) {
+        streamWidth = config.width;
+        streamHeight = config.height;
+        runOnUiThread(this::updateVideoSurfaceLayout);
+    }
+
+    private void updateVideoSurfaceLayout() {
+        if (videoFrame == null || surfaceView == null) return;
+        int availableWidth = videoFrame.getWidth();
+        int availableHeight = videoFrame.getHeight();
+        if (availableWidth <= 0 || availableHeight <= 0) return;
+
+        if (streamWidth < 2 || streamHeight < 2) {
+            if (gamepadOverlay != null) {
+                gamepadOverlay.setVideoContentRect(0f, 0f,
+                        availableWidth, availableHeight);
+            }
+            return;
+        }
+
+        float scale = Math.min(
+                (float) availableWidth / (float) streamWidth,
+                (float) availableHeight / (float) streamHeight);
+        int surfaceWidth = Math.max(1, Math.round(streamWidth * scale));
+        int surfaceHeight = Math.max(1, Math.round(streamHeight * scale));
+        int left = (availableWidth - surfaceWidth) / 2;
+        int top = (availableHeight - surfaceHeight) / 2;
+
+        ViewGroup.LayoutParams rawParams = surfaceView.getLayoutParams();
+        if (rawParams instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) rawParams;
+            if (params.width != surfaceWidth || params.height != surfaceHeight
+                    || params.gravity != Gravity.CENTER) {
+                params.width = surfaceWidth;
+                params.height = surfaceHeight;
+                params.gravity = Gravity.CENTER;
+                surfaceView.setLayoutParams(params);
+            }
+        }
+
+        if (gamepadOverlay != null) {
+            gamepadOverlay.setVideoContentRect(
+                    left, top, surfaceWidth, surfaceHeight);
+        }
+    }
+
     private void receiveLoop(Surface surface) {
         MediaCodec decoder = null;
         DataInputStream input = null;
@@ -503,6 +563,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                     new BufferedInputStream(videoSocket.getInputStream(), 256 * 1024));
 
             StreamConfig config = readStreamHeader(input);
+            setStreamDimensions(config);
             decoder = createDecoder(config, surface);
             videoStatus = "Decoder siap " + config.width + " × " + config.height
                     + ". Menunggu frame...";
@@ -519,6 +580,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 if (size == -1) {
                     decoder = releaseDecoder(decoder);
                     config = readStreamHeader(input);
+                    setStreamDimensions(config);
                     decoder = createDecoder(config, surface);
                     videoStatus = "Stream baru " + config.width + " × " + config.height;
                     updateStatus();
