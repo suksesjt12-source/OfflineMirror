@@ -25,10 +25,10 @@ public final class GamepadOverlayView extends View {
     private static final int BUTTON_Y = 1 << 3;
     private static final int BUTTON_L1 = 1 << 4;
     private static final int BUTTON_R1 = 1 << 5;
-    private static final int BUTTON_SELECT = 1 << 6;
-    private static final int BUTTON_START = 1 << 7;
-    private static final int BUTTON_L2 = 1 << 8;
-    private static final int BUTTON_R2 = 1 << 9;
+    private static final int BUTTON_L2 = 1 << 6;
+    private static final int BUTTON_R2 = 1 << 7;
+    private static final int BUTTON_SELECT = 1 << 8;
+    private static final int BUTTON_START = 1 << 9;
     private static final int BUTTON_DPAD_UP = 1 << 10;
     private static final int BUTTON_DPAD_DOWN = 1 << 11;
     private static final int BUTTON_DPAD_LEFT = 1 << 12;
@@ -111,21 +111,21 @@ public final class GamepadOverlayView extends View {
     }
 
     private float leftStickCenterX() {
-        if (layoutPreset == 2) return getWidth() * 0.82f;
-        return getWidth() * (isLandscapeLayout() ? 0.14f : 0.19f);
+        if (layoutPreset == 2) return getWidth() * (isLandscapeLayout() ? 0.82f : 0.82f);
+        return getWidth() * (isLandscapeLayout() ? 0.14f : 0.18f);
     }
 
     private float rightStickCenterX() {
-        if (layoutPreset == 2) return getWidth() * 0.32f;
-        return getWidth() * (isLandscapeLayout() ? 0.66f : 0.69f);
+        if (layoutPreset == 2) return getWidth() * (isLandscapeLayout() ? 0.32f : 0.48f);
+        return getWidth() * (isLandscapeLayout() ? 0.66f : 0.52f);
     }
 
     private float stickCenterY() {
-        return getHeight() * 0.81f;
+        return getHeight() * (isLandscapeLayout() ? 0.81f : 0.84f);
     }
 
     private float dpadCenterX() {
-        return getWidth() * (layoutPreset == 2 ? 0.86f : 0.14f);
+        return getWidth() * (layoutPreset == 2 ? 0.82f : (isLandscapeLayout() ? 0.14f : 0.18f));
     }
 
     private float dpadCenterY() {
@@ -165,13 +165,13 @@ public final class GamepadOverlayView extends View {
 
     private float buttonX(int bit) {
         float x;
-        if (bit == BUTTON_A || bit == BUTTON_Y) x = getWidth() * 0.88f;
-        else if (bit == BUTTON_B) x = getWidth() * 0.94f;
-        else if (bit == BUTTON_X) x = getWidth() * 0.82f;
+        if (bit == BUTTON_A || bit == BUTTON_Y) x = getWidth() * (isLandscapeLayout() ? 0.88f : 0.84f);
+        else if (bit == BUTTON_B) x = getWidth() * (isLandscapeLayout() ? 0.94f : 0.94f);
+        else if (bit == BUTTON_X) x = getWidth() * (isLandscapeLayout() ? 0.82f : 0.76f);
         else if (bit == BUTTON_L1) x = getWidth() * 0.08f;
         else if (bit == BUTTON_L2) x = getWidth() * 0.20f;
-        else if (bit == BUTTON_SELECT) x = getWidth() * 0.43f;
-        else if (bit == BUTTON_START) x = getWidth() * 0.57f;
+        else if (bit == BUTTON_SELECT) x = getWidth() * (isLandscapeLayout() ? 0.43f : 0.35f);
+        else if (bit == BUTTON_START) x = getWidth() * (isLandscapeLayout() ? 0.57f : 0.62f);
         else if (bit == BUTTON_R2) x = getWidth() * 0.80f;
         else if (bit == BUTTON_R1) x = getWidth() * 0.92f;
         else x = getWidth() * 0.88f;
@@ -179,10 +179,16 @@ public final class GamepadOverlayView extends View {
     }
 
     private float buttonY(int bit) {
-        if (bit == BUTTON_Y) return getHeight() * 0.65f;
-        if (bit == BUTTON_A) return getHeight() * 0.87f;
-        if (bit == BUTTON_X || bit == BUTTON_B) return getHeight() * 0.76f;
-        return getHeight() * (isLandscapeLayout() ? 0.10f : 0.08f);
+        if (isLandscapeLayout()) {
+            if (bit == BUTTON_Y) return getHeight() * 0.65f;
+            if (bit == BUTTON_A) return getHeight() * 0.87f;
+            if (bit == BUTTON_X || bit == BUTTON_B) return getHeight() * 0.76f;
+            return getHeight() * 0.10f;
+        }
+        if (bit == BUTTON_Y) return getHeight() * 0.56f;
+        if (bit == BUTTON_X || bit == BUTTON_B) return getHeight() * 0.65f;
+        if (bit == BUTTON_A) return getHeight() * 0.74f;
+        return getHeight() * 0.08f;
     }
 
     @Override
@@ -273,7 +279,7 @@ public final class GamepadOverlayView extends View {
     private int hitButton(float x, float y) {
         int[] directions = {BUTTON_DPAD_UP, BUTTON_DPAD_DOWN,
                 BUTTON_DPAD_LEFT, BUTTON_DPAD_RIGHT};
-        float dpadHitRadius = dpadRadius() + dp(7);
+        float dpadHitRadius = dpadRadius() + dp(2);
         for (int bit : directions) {
             float dx = x - dpadX(bit);
             float dy = y - dpadY(bit);
@@ -281,7 +287,7 @@ public final class GamepadOverlayView extends View {
         }
 
         int[] actions = {BUTTON_A, BUTTON_B, BUTTON_X, BUTTON_Y};
-        float actionHitRadius = actionRadius() + dp(5);
+        float actionHitRadius = actionRadius() + dp(3);
         for (int bit : actions) {
             float dx = x - buttonX(bit);
             float dy = y - buttonY(bit);
@@ -291,7 +297,7 @@ public final class GamepadOverlayView extends View {
         int[] topButtons = {BUTTON_L1, BUTTON_L2, BUTTON_R1, BUTTON_R2,
                 BUTTON_SELECT, BUTTON_START};
         for (int bit : topButtons) {
-            float width = (bit == BUTTON_SELECT || bit == BUTTON_START) ? dp(42) : dp(32);
+            float width = (bit == BUTTON_SELECT || bit == BUTTON_START) ? dp(39) : dp(29);
             if (Math.abs(x - buttonX(bit)) <= width
                     && Math.abs(y - buttonY(bit)) <= dp(22)) return bit;
         }
@@ -300,14 +306,15 @@ public final class GamepadOverlayView extends View {
 
     private void updateStick(float x, float y, boolean rightStick) {
         float centerX = rightStick ? rightStickCenterX() : leftStickCenterX();
-        float dx = (x - centerX) / Math.max(1f, stickRadius() * 0.78f) * sensitivity;
-        float dy = (y - stickCenterY()) / Math.max(1f, stickRadius() * 0.78f) * sensitivity;
+        float dx = (x - centerX) / Math.max(1f, stickRadius() * 0.90f) * sensitivity;
+        float dy = (y - stickCenterY()) / Math.max(1f, stickRadius() * 0.90f) * sensitivity;
         float distance = (float) Math.hypot(dx, dy);
-        if (distance <= 0.06f) {
+        final float deadZone = 0.10f;
+        if (distance <= deadZone) {
             dx = 0f;
             dy = 0f;
         } else {
-            float normalized = Math.min(1f, (distance - 0.06f) / 0.94f);
+            float normalized = Math.min(1f, (distance - deadZone) / (1f - deadZone));
             dx = (dx / distance) * normalized;
             dy = (dy / distance) * normalized;
         }
@@ -334,6 +341,8 @@ public final class GamepadOverlayView extends View {
 
     private void pressPointer(MotionEvent event, int index) {
         int pointerId = event.getPointerId(index);
+        if (buttonPointers.containsKey(pointerId)
+                || pointerId == leftStickPointer || pointerId == rightStickPointer) return;
         float x = event.getX(index);
         float y = event.getY(index);
 
@@ -348,7 +357,7 @@ public final class GamepadOverlayView extends View {
         float dy = y - stickCenterY();
         float leftDx = x - leftStickCenterX();
         if (leftStickPointer == -1
-                && leftDx * leftDx + dy * dy <= Math.pow(stickRadius() + dp(25), 2)) {
+                && leftDx * leftDx + dy * dy <= Math.pow(stickRadius() + dp(12), 2)) {
             leftStickPointer = pointerId;
             updateStick(x, y, false);
             emitState();
@@ -357,7 +366,7 @@ public final class GamepadOverlayView extends View {
 
         float rightDx = x - rightStickCenterX();
         if (rightStickPointer == -1
-                && rightDx * rightDx + dy * dy <= Math.pow(stickRadius() + dp(25), 2)) {
+                && rightDx * rightDx + dy * dy <= Math.pow(stickRadius() + dp(12), 2)) {
             rightStickPointer = pointerId;
             updateStick(x, y, true);
             emitState();

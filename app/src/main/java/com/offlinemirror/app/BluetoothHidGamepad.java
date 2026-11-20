@@ -102,9 +102,18 @@ public final class BluetoothHidGamepad {
         }
         @Override public void onConnectionStateChanged(BluetoothDevice device,int state) {
             connected=state==BluetoothProfile.STATE_CONNECTED;
-            if(connected){target=device;status("Bluetooth terhubung • gamepad + mouse aktif");sendState(0,0f,0f,0f,0f);sendMouse(0,0,0,0);}
-            else if(state==BluetoothProfile.STATE_CONNECTING)status("Bluetooth HID sedang menyambungkan...");
-            else if(state==BluetoothProfile.STATE_DISCONNECTED)status("Bluetooth HID terputus • sambungkan ulang dari Viewer");
+            if(connected){
+                target=device;
+                resetQueuedState();
+                status("Bluetooth terhubung • gamepad + mouse aktif");
+                sendState(0,0f,0f,0f,0f);
+                sendMouse(0,0,0,0);
+            } else if(state==BluetoothProfile.STATE_CONNECTING) {
+                status("Bluetooth HID sedang menyambungkan...");
+            } else if(state==BluetoothProfile.STATE_DISCONNECTED) {
+                resetQueuedState();
+                status("Bluetooth HID terputus • sambungkan ulang dari Viewer");
+            }
         }
         @Override public void onGetReport(BluetoothDevice device,byte type,byte id,int bufferSize) {
             if(hidDevice!=null&&type==BluetoothHidDevice.REPORT_TYPE_INPUT)try{hidDevice.replyReport(device,type,id,neutralReport(id));}
@@ -115,31 +124,83 @@ public final class BluetoothHidGamepad {
     public void sendState(int buttons,float leftX,float leftY,float rightX,float rightY) {
         if(!connected||reportHandler==null)return;
         byte[] report=buildGamepadReport(buttons,leftX,leftY,rightX,rightY);
-        boolean edge=buttons!=lastQueuedButtons;lastQueuedButtons=buttons;
-        synchronized(reportLock){pendingGamepadReport=report;reportHandler.removeCallbacks(sendLatestGamepadReport);if(edge)reportHandler.post(sendLatestGamepadReport);else reportHandler.postDelayed(sendLatestGamepadReport,8L);}
+        synchronized(reportLock) {
+            boolean edge=buttons!=lastQueuedButtons;
+            lastQueuedButtons=buttons;
+            if(edge) {
+                pendingGamepadReport=null;
+                reportHandler.removeCallbacks(sendLatestGamepadReport);
+                reportHandler.post(() -> sendReportNow(GAMEPAD_REPORT_ID,report));
+            } else {
+                pendingGamepadReport=report;
+                reportHandler.removeCallbacks(sendLatestGamepadReport);
+                reportHandler.postDelayed(sendLatestGamepadReport,8L);
+            }
+        }
     }
+
     /** Relative mouse report. Button bits: left, right, middle. */
     public void sendMouse(int dx,int dy,int buttons,int wheel) {
         if(!connected||reportHandler==null)return;
-        byte[] report={(byte)(buttons&7),(byte)clampSignedByte(dx),(byte)clampSignedByte(dy),(byte)clampSignedByte(wheel)};
-        boolean edge=(buttons&7)!=lastQueuedMouseButtons;lastQueuedMouseButtons=buttons&7;
-        synchronized(reportLock){pendingMouseReport=report;reportHandler.removeCallbacks(sendLatestMouseReport);if(edge)reportHandler.post(sendLatestMouseReport);else reportHandler.postDelayed(sendLatestMouseReport,2L);}
+        int safeButtons=buttons&7;
+        byte[] report={(byte)safeButtons,(byte)clampSignedByte(dx),(byte)clampSignedByte(dy),(byte)clampSignedByte(wheel)};
+        synchronized(reportLock) {
+            boolean edge=safeButtons!=lastQueuedMouseButtons;
+            lastQueuedMouseButtons=safeButtons;
+            if(edge) {
+                pendingMouseReport=null;
+                reportHandler.removeCallbacks(sendLatestMouseReport);
+                reportHandler.post(() -> sendReportNow(MOUSE_REPORT_ID,report));
+            } else {
+                pendingMouseReport=report;
+                reportHandler.removeCallbacks(sendLatestMouseReport);
+                reportHandler.postDelayed(sendLatestMouseReport,2L);
+            }
+        }
     }
     private void sendPendingReport(int reportId,boolean gamepad) {
-        byte[] report;BluetoothHidDevice device;BluetoothDevice receiver;
-        synchronized(reportLock){if(gamepad){report=pendingGamepadReport;pendingGamepadReport=null;}else{report=pendingMouseReport;pendingMouseReport=null;}device=hidDevice;receiver=target;}
+        byte[] report;
+        synchronized(reportLock) {
+            if(gamepad){report=pendingGamepadReport;pendingGamepadReport=null;}
+            else {report=pendingMouseReport;pendingMouseReport=null;}
+        }
+        sendReportNow(reportId,report);
+    }
+
+    private void sendReportNow(int reportId,byte[] report) {
+        BluetoothHidDevice device=hidDevice;
+        BluetoothDevice receiver=target;
         if(report==null||!connected||device==null||receiver==null)return;
-        try{if(!device.sendReport(receiver,reportId,report))Log.w(TAG,"Bluetooth stack rejected HID report "+reportId);}
-        catch(SecurityException denied){status("Izin Bluetooth Connect diperlukan");}
-        catch(Exception error){Log.w(TAG,"HID input report failed",error);}
+        try {
+            if(!device.sendReport(receiver,reportId,report)) {
+                Log.w(TAG,"Bluetooth stack rejected HID report "+reportId);
+            }
+        } catch(SecurityException denied) {
+            status("Izin Bluetooth Connect diperlukan");
+        } catch(Exception error) {
+            Log.w(TAG,"HID input report failed",error);
+        }
+    }
+
+    private void resetQueuedState() {
+        synchronized(reportLock) {
+            lastQueuedButtons=-1;
+            lastQueuedMouseButtons=-1;
+            pendingGamepadReport=null;
+            pendingMouseReport=null;
+            if(reportHandler!=null) {
+                reportHandler.removeCallbacks(sendLatestGamepadReport);
+                reportHandler.removeCallbacks(sendLatestMouseReport);
+            }
+        }
     }
     private byte[] buildGamepadReport(int buttons,float lx,float ly,float rx,float ry) {
         byte[] report=new byte[9];int mask=buttons&0x03FF;
         report[0]=(byte)(mask&0xFF);report[1]=(byte)((mask>>>8)&3);
         report[2]=(byte)hatValue(buttons);
         report[3]=toAxis(lx);report[4]=toAxis(ly);report[5]=toAxis(rx);report[6]=toAxis(ry);
-        report[7]=(byte)((buttons&(1<<8))!=0?255:0);
-        report[8]=(byte)((buttons&(1<<9))!=0?255:0);
+        report[7]=(byte)((buttons&(1<<6))!=0?255:0);
+        report[8]=(byte)((buttons&(1<<7))!=0?255:0);
         return report;
     }
     private byte[] neutralReport(int id) {

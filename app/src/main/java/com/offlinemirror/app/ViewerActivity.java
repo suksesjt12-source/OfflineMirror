@@ -67,6 +67,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private GamepadOverlayView gamepadOverlay;
     private BluetoothHidGamepad bluetoothGamepad;
     private MouseOverlayView mouseOverlay;
+    private MouseCursorView mouseCursor;
     private volatile String bluetoothStatus =
             "Bluetooth HID belum tersambung • tekan PAIR BT";
     private boolean controlEnabled = true;
@@ -189,8 +190,17 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         mouseOverlay = new MouseOverlayView(this);
+        mouseCursor = new MouseCursorView(this);
+        mouseCursor.setVisibility(View.GONE);
+        FrameLayout.LayoutParams cursorParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        videoFrame.addView(mouseCursor, cursorParams);
         mouseOverlay.setListener((dx, dy, buttons, wheel) -> {
             if (bluetoothGamepad != null) bluetoothGamepad.sendMouse(dx, dy, buttons, wheel);
+            if (mouseCursor != null && (dx != 0 || dy != 0)) {
+                mouseCursor.moveBy(Math.max(-127, Math.min(127, dx)),
+                        Math.max(-127, Math.min(127, dy)));
+            }
         });
         mouseOverlay.setVisibility(View.GONE);
         FrameLayout.LayoutParams mouseParams = new FrameLayout.LayoutParams(
@@ -243,6 +253,10 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             mouseToggle.setOnClickListener(v -> {
                 boolean visible = mouseOverlay.getVisibility() == View.VISIBLE;
                 mouseOverlay.setVisibility(visible ? View.GONE : View.VISIBLE);
+                if (mouseCursor != null) {
+                    mouseCursor.setVisibility(visible ? View.GONE : View.VISIBLE);
+                    if (!visible) mouseCursor.resetCursor();
+                }
                 mouseToggle.setText(visible ? "MOUSE" : "MOUSE: ON");
                 if (visible) mouseOverlay.releaseAllInputs();
             });
@@ -267,6 +281,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             overlayToggle.setVisibility(View.GONE);
             gamepadBar.setVisibility(View.GONE);
             toolsScroll.setVisibility(View.GONE);
+            hudToggle.setVisibility(View.GONE);
             controlStatus = "Mode penonton • video saja";
         }
         overlayToggle.setOnClickListener(button -> {
@@ -274,6 +289,32 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             gamepadOverlay.setVisibility(visible ? View.GONE : View.VISIBLE);
             overlayToggle.setText(visible ? "TAMPILKAN GAMEPAD" : "SEMBUNYIKAN GAMEPAD");
             if (!visible) gamepadOverlay.releaseAllInputs();
+        });
+
+        Button hudToggle = new Button(this);
+        hudToggle.setTextSize(10);
+        hudToggle.setMinWidth(dp(52));
+        hudToggle.setMinimumWidth(dp(52));
+        hudToggle.setMinHeight(dp(40));
+        hudToggle.setMinimumHeight(dp(40));
+        FrameLayout.LayoutParams hudParams = new FrameLayout.LayoutParams(
+                dp(58), dp(42), Gravity.BOTTOM | Gravity.END);
+        hudParams.bottomMargin = dp(10);
+        hudParams.rightMargin = dp(10);
+        root.addView(hudToggle, hudParams);
+        final boolean[] hudShown = {preferences.getBoolean("hud_visible", true)};
+        Runnable applyHudVisibility = () -> {
+            int visibility = hudShown[0] ? View.VISIBLE : View.GONE;
+            status.setVisibility(visibility);
+            gamepadBar.setVisibility(visibility);
+            toolsScroll.setVisibility(visibility);
+            hudToggle.setText(hudShown[0] ? "HUD −" : "HUD +");
+        };
+        applyHudVisibility.run();
+        hudToggle.setOnClickListener(button -> {
+            hudShown[0] = !hudShown[0];
+            applyHudVisibility.run();
+            preferences.edit().putBoolean("hud_visible", hudShown[0]).apply();
         });
 
         setContentView(root);
@@ -478,6 +519,10 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         LinearLayout panel = new LinearLayout(this);
         panel.setPadding(dp(18), dp(10), dp(18), dp(4));
         panel.setOrientation(LinearLayout.VERTICAL);
+        TextView mappingInfo = new TextView(this);
+        mappingInfo.setText("Mapping Android Standard: A, B, X, Y, L1, R1, L2, R2, Select, Start, D-pad, L3/R3 axis click jika didukung, dua analog");
+        mappingInfo.setTextSize(12);
+        panel.addView(mappingInfo);
         TextView presetLabel = new TextView(this);
         presetLabel.setText("Layout gamepad");
         panel.addView(presetLabel);
@@ -987,7 +1032,12 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) enableImmersiveViewer();
+        if (hasFocus) {
+            enableImmersiveViewer();
+        } else {
+            if (gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
+            if (mouseOverlay != null) mouseOverlay.releaseAllInputs();
+        }
     }
 
     @Override
