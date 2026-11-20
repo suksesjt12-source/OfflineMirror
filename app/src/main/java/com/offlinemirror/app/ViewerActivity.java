@@ -9,6 +9,7 @@ import android.view.Gravity;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -40,6 +41,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         host = getIntent().getStringExtra("host");
         getWindow().setStatusBarColor(Color.BLACK);
         getWindow().setNavigationBarColor(Color.BLACK);
+        enableImmersiveViewer();
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -55,10 +57,21 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
 
         surfaceView = new SurfaceView(this);
+        surfaceView.setBackgroundColor(Color.BLACK);
         root.addView(surfaceView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         surfaceView.getHolder().addCallback(this);
         setContentView(root);
+    }
+
+    private void enableImmersiveViewer() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN);
     }
 
     @Override
@@ -91,32 +104,26 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             socket.connect(new InetSocketAddress(host, PORT), 10_000);
             input = new DataInputStream(new BufferedInputStream(socket.getInputStream(), 256 * 1024));
 
-            int magic = input.readInt();
-            if (magic != MAGIC) throw new IllegalStateException("Unsupported stream header");
-            int width = input.readInt();
-            int height = input.readInt();
-            if (width < 2 || height < 2 || width > 4096 || height > 4096) {
-                throw new IllegalStateException("Invalid video dimensions");
-            }
-
-            byte[] csd0 = readConfig(input);
-            byte[] csd1 = readConfig(input);
-            MediaFormat format = MediaFormat.createVideoFormat(
-                    MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
-            if (csd0.length > 0) format.setByteBuffer("csd-0", ByteBuffer.wrap(csd0));
-            if (csd1.length > 0) format.setByteBuffer("csd-1", ByteBuffer.wrap(csd1));
-
-            decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
-            decoder.configure(format, surface, null, 0);
-            decoder.start();
-            updateStatus("Connected • " + width + " × " + height + " • H.264");
+            StreamConfig config = readStreamHeader(input);
+            decoder = createDecoder(config, surface);
+            updateStatus("Connected • " + config.width + " × " + config.height + " • H.264");
 
             MediaCodec.BufferInfo outputInfo = new MediaCodec.BufferInfo();
             while (running) {
                 int size = input.readInt();
+
+                // The host sends -1 before a new codec header when its screen rotates.
+                if (size == -1) {
+                    decoder = releaseDecoder(decoder);
+                    config = readStreamHeader(input);
+                    decoder = createDecoder(config, surface);
+                    updateStatus("Orientation updated • " + config.width + " × " + config.height);
+                    continue;
+                }
+
                 int flags = input.readInt();
                 long presentationTimeUs = input.readLong();
-                if (size < 0 || size > 8 * 1024 * 1024) {
+                if (size <= 0 || size > 8 * 1024 * 1024) {
                     throw new IllegalStateException("Invalid video packet");
                 }
                 byte[] packet = new byte[size];
@@ -135,7 +142,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 }
                 inputBuffer.clear();
                 inputBuffer.put(packet);
-                int decoderFlags = (flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                int decoderFlags = flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM;
                 decoder.queueInputBuffer(inputIndex, 0, packet.length,
                         presentationTimeUs, decoderFlags);
 
@@ -153,11 +160,44 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             running = false;
             try { if (input != null) input.close(); } catch (Exception ignored) {}
             try { if (socket != null) socket.close(); } catch (Exception ignored) {}
-            if (decoder != null) {
-                try { decoder.stop(); } catch (Exception ignored) {}
-                try { decoder.release(); } catch (Exception ignored) {}
-            }
+            releaseDecoder(decoder);
         }
+    }
+
+    private StreamConfig readStreamHeader(DataInputStream input) throws Exception {
+        int magic = input.readInt();
+        if (magic != MAGIC) throw new IllegalStateException("Unsupported stream header");
+        int width = input.readInt();
+        int height = input.readInt();
+        if (width < 2 || height < 2 || width > 4096 || height > 4096) {
+            throw new IllegalStateException("Invalid video dimensions");
+        }
+        byte[] csd0 = readConfig(input);
+        byte[] csd1 = readConfig(input);
+        return new StreamConfig(width, height, csd0, csd1);
+    }
+
+    private MediaCodec createDecoder(StreamConfig config, Surface surface) throws Exception {
+        MediaFormat format = MediaFormat.createVideoFormat(
+                MediaFormat.MIMETYPE_VIDEO_AVC, config.width, config.height);
+        if (config.csd0.length > 0) {
+            format.setByteBuffer("csd-0", ByteBuffer.wrap(config.csd0));
+        }
+        if (config.csd1.length > 0) {
+            format.setByteBuffer("csd-1", ByteBuffer.wrap(config.csd1));
+        }
+        MediaCodec decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+        decoder.configure(format, surface, null, 0);
+        decoder.start();
+        return decoder;
+    }
+
+    private MediaCodec releaseDecoder(MediaCodec decoder) {
+        if (decoder != null) {
+            try { decoder.stop(); } catch (Exception ignored) {}
+            try { decoder.release(); } catch (Exception ignored) {}
+        }
+        return null;
     }
 
     private byte[] readConfig(DataInputStream input) throws Exception {
@@ -182,8 +222,28 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     }
 
     @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) enableImmersiveViewer();
+    }
+
+    @Override
     protected void onDestroy() {
         stopReceiving();
         super.onDestroy();
+    }
+
+    private static final class StreamConfig {
+        final int width;
+        final int height;
+        final byte[] csd0;
+        final byte[] csd1;
+
+        StreamConfig(int width, int height, byte[] csd0, byte[] csd1) {
+            this.width = width;
+            this.height = height;
+            this.csd0 = csd0;
+            this.csd1 = csd1;
+        }
     }
 }
