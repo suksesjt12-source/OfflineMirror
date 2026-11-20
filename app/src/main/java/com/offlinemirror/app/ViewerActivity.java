@@ -52,7 +52,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private float touchDownY;
     private long touchDownTime;
 
-    private volatile String videoStatus = "Connecting";
+    private volatile String videoStatus = "Menyiapkan koneksi...";
     private volatile String audioStatus = "Audio: waiting";
     private volatile String controlStatus = "Touch: connecting";
 
@@ -93,6 +93,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         surfaceView.getHolder().addCallback(this);
         surfaceView.setOnTouchListener(this::handleViewerTouch);
         setContentView(root);
+        videoStatus = "Menghubungkan ke " + host + "...";
         updateStatus();
     }
 
@@ -134,19 +135,25 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             videoSocket = new Socket();
             videoSocket.setTcpNoDelay(true);
             videoSocket.connect(new InetSocketAddress(host, videoPort), 10_000);
+            videoStatus = "Terhubung. Menunggu encoder Host...";
+            updateStatus();
 
             input = new DataInputStream(
                     new BufferedInputStream(videoSocket.getInputStream(), 256 * 1024));
 
             StreamConfig config = readStreamHeader(input);
+            videoStatus = "Header diterima. Menyiapkan decoder...";
+            updateStatus();
             decoder = createDecoder(config, surface);
-            videoStatus = "Video " + config.width + " × " + config.height;
+            videoStatus = "Decoder siap " + config.width + " × " + config.height
+                    + ". Menunggu frame pertama...";
             updateStatus();
 
             connectControl();
             if (audioEnabled) startAudioPlayback();
 
             MediaCodec.BufferInfo outputInfo = new MediaCodec.BufferInfo();
+            boolean firstFrameRendered = false;
             while (running) {
                 int size = input.readInt();
 
@@ -155,6 +162,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                     decoder = releaseDecoder(decoder);
                     config = readStreamHeader(input);
                     decoder = createDecoder(config, surface);
+                    firstFrameRendered = false;
                     videoStatus = "Video " + config.width + " × " + config.height + " • rotated";
                     updateStatus();
                     continue;
@@ -185,17 +193,21 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 decoder.queueInputBuffer(inputIndex, 0, packet.length,
                         presentationTimeUs, decoderFlags);
 
-                int outputIndex;
-                do {
-                    outputIndex = decoder.dequeueOutputBuffer(outputInfo, 0);
-                    if (outputIndex >= 0) {
-                        decoder.releaseOutputBuffer(outputIndex, true);
+                int outputIndex = decoder.dequeueOutputBuffer(outputInfo, 10_000);
+                while (outputIndex >= 0 && running) {
+                    decoder.releaseOutputBuffer(outputIndex, true);
+                    if (!firstFrameRendered) {
+                        firstFrameRendered = true;
+                        videoStatus = "Mirroring aktif • " + config.width + " × " + config.height;
+                        updateStatus();
                     }
-                } while (outputIndex >= 0 && running);
+                    outputIndex = decoder.dequeueOutputBuffer(outputInfo, 0);
+                }
             }
         } catch (Exception error) {
+            android.util.Log.e("OfflineMirror", "Viewer video receive failed", error);
             if (running) {
-                videoStatus = "Video stopped: " + error.getMessage();
+                videoStatus = "Gagal menerima video: " + error.getMessage();
                 updateStatus();
             }
         } finally {
@@ -362,6 +374,9 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         }
         byte[] csd0 = readConfig(input);
         byte[] csd1 = readConfig(input);
+        if (csd0.length == 0 && csd1.length == 0) {
+            throw new IllegalStateException("Host mengirim konfigurasi H.264 kosong");
+        }
         return new StreamConfig(width, height, csd0, csd1);
     }
 
@@ -371,6 +386,9 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         if (config.csd0.length > 0) format.setByteBuffer("csd-0", ByteBuffer.wrap(config.csd0));
         if (config.csd1.length > 0) format.setByteBuffer("csd-1", ByteBuffer.wrap(config.csd1));
         MediaCodec decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+        if (surface == null || !surface.isValid()) {
+            throw new IllegalStateException("Layar Viewer belum siap");
+        }
         decoder.configure(format, surface, null, 0);
         decoder.start();
         return decoder;

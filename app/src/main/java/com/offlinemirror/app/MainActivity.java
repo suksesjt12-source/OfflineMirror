@@ -27,6 +27,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 
+import java.util.UUID;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_CAPTURE = 4101;
@@ -39,11 +40,14 @@ public class MainActivity extends Activity {
     private Spinner fpsSpinner;
     private Spinner bitrateSpinner;
     private EditText addressInput;
+    private EditText keyInput;
     private CheckBox audioCheck;
     private TextView hostAddress;
+    private TextView hostKeyText;
     private TextView statusText;
     private CheckBox viewerAudioCheck;
     private Button connectButton;
+    private String sessionKey = "";
 
     private int dp(float value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
@@ -121,15 +125,40 @@ public class MainActivity extends Activity {
         ipParams.topMargin = dp(8);
         page.addView(hostAddress, ipParams);
 
+        hostKeyText = new TextView(this);
+        hostKeyText.setText("Pairing key: belum aktif");
+        hostKeyText.setTextColor(Color.rgb(190, 205, 229));
+        hostKeyText.setTextSize(14);
+        hostKeyText.setTextIsSelectable(true);
+        hostKeyText.setPadding(dp(12), dp(12), dp(12), dp(12));
+        LinearLayout.LayoutParams keyParams = matchWrap();
+        keyParams.topMargin = dp(4);
+        page.addView(hostKeyText, keyParams);
+
         Button copyButton = makeButton("COPY HOST ADDRESS", Color.rgb(35, 48, 69));
         LinearLayout.LayoutParams copyParams = matchWrap();
         copyParams.topMargin = dp(8);
         page.addView(copyButton, copyParams);
         copyButton.setOnClickListener(v -> {
-            String value = NetworkAddress.getLocalIpv4(this);
+            String value = NetworkAddress.getLocalIpv4(this) + ":" + VIDEO_PORT;
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("OfflineMirror host", value));
-            Toast.makeText(this, "IP Host disalin", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Host address copied", Toast.LENGTH_SHORT).show();
+        });
+
+        Button copyKeyButton = makeButton("COPY PAIRING KEY", Color.rgb(35, 48, 69));
+        LinearLayout.LayoutParams copyKeyParams = matchWrap();
+        copyKeyParams.topMargin = dp(8);
+        page.addView(copyKeyButton, copyKeyParams);
+        copyKeyButton.setOnClickListener(v -> {
+            if (sessionKey.isEmpty()) {
+                Toast.makeText(this, "Start sharing terlebih dahulu.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("OfflineMirror pairing key", sessionKey));
+            Toast.makeText(this, "Pairing key disalin. Bagikan hanya ke Viewer yang dipercaya.",
+                    Toast.LENGTH_LONG).show();
         });
 
         Button accessibilityButton = makeButton("ENABLE REMOTE TOUCH ON THIS PHONE", Color.rgb(91, 72, 132));
@@ -152,7 +181,9 @@ public class MainActivity extends Activity {
         page.addView(stopButton, stopParams);
         stopButton.setOnClickListener(v -> {
             stopService(new Intent(this, MirrorHostService.class));
-            setStatus("Screen sharing dihentikan.");
+            sessionKey = "";
+            if (hostKeyText != null) hostKeyText.setText("Pairing key: tidak aktif");
+            setStatus("Sharing dihentikan. Pairing key sebelumnya sudah tidak berlaku.");
         });
 
         addDivider(page);
@@ -163,6 +194,12 @@ public class MainActivity extends Activity {
         addressInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
                 android.text.InputType.TYPE_TEXT_VARIATION_URI);
         page.addView(addressInput, matchWrap());
+
+        addLabel(page, "Pairing key dari HP Host");
+        keyInput = new EditText(this);
+        styleInput(keyInput, "Masukkan pairing key dari HP Host");
+        keyInput.setSingleLine(true);
+        page.addView(keyInput, matchWrap());
 
         viewerAudioCheck = new CheckBox(this);
         viewerAudioCheck.setText("Terima audio dari Host (Android 10+)");
@@ -182,13 +219,13 @@ public class MainActivity extends Activity {
 
         statusText = new TextView(this);
         statusText.setTextColor(Color.rgb(159, 177, 203));
-        statusText.setText("Hubungkan kedua HP ke Wi-Fi/hotspot yang sama. Masukkan IP Host untuk menyambung.");
+        statusText.setText("Hubungkan kedua HP ke Wi-Fi/hotspot yang sama. Masukkan IP Host dan pairing key secara manual.");
         LinearLayout.LayoutParams statusParams = matchWrap();
         statusParams.topMargin = dp(20);
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("Koneksi hanya menggunakan IP Host, tanpa autentikasi. Perangkat lain di jaringan Wi-Fi yang sama juga dapat mencoba tersambung. Gunakan jaringan pribadi yang dipercaya. Remote touch memerlukan izin Accessibility dari pemilik Host.");
+        note.setText("Tanpa QR dan tanpa pemindaian kamera. Salin IP Host serta pairing key dari HP Host, lalu masukkan di Viewer. Remote touch memerlukan izin Accessibility dari pemilik Host. Audio capture memerlukan Android 10+ dan dapat diblokir oleh aplikasi tertentu.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
@@ -217,17 +254,30 @@ public class MainActivity extends Activity {
 
     private void connectToHost() {
         String host = addressInput.getText().toString().trim();
+        String key = keyInput.getText().toString().trim();
+
         if (!NetworkAddress.isValidIpv4(host)) {
             addressInput.setError("Masukkan IP lokal Host yang benar.");
             return;
         }
+        if (!isValidSessionKey(key)) {
+            keyInput.setError("Masukkan pairing key dari HP Host.");
+            return;
+        }
+
         Intent viewer = new Intent(this, ViewerActivity.class);
         viewer.putExtra("host", host);
+        viewer.putExtra("sessionKey", key);
         viewer.putExtra("audioEnabled", viewerAudioCheck != null && viewerAudioCheck.isChecked());
         viewer.putExtra("videoPort", VIDEO_PORT);
         viewer.putExtra("audioPort", AUDIO_PORT);
         viewer.putExtra("controlPort", CONTROL_PORT);
         startActivity(viewer);
+    }
+
+    private boolean isValidSessionKey(String key) {
+        return key != null && key.length() >= 16 && key.length() <= 128
+                && key.matches("[A-Za-z0-9_-]+");
     }
 
     private void styleInput(EditText input, String hint) {
@@ -323,6 +373,8 @@ public class MainActivity extends Activity {
         int maxDimension = resolutionSpinner.getSelectedItemPosition() == 0 ? 1280 : 1920;
         int fps = new int[]{15, 24, 30}[fpsSpinner.getSelectedItemPosition()];
         int bitrate = new int[]{2, 4, 6}[bitrateSpinner.getSelectedItemPosition()] * 1_000_000;
+        sessionKey = UUID.randomUUID().toString().replace("-", "");
+        if (hostKeyText != null) hostKeyText.setText("Pairing key: " + sessionKey);
 
         Intent service = new Intent(this, MirrorHostService.class);
         service.putExtra("resultCode", resultCode);
@@ -330,6 +382,7 @@ public class MainActivity extends Activity {
         service.putExtra("maxDimension", maxDimension);
         service.putExtra("fps", fps);
         service.putExtra("bitrate", bitrate);
+        service.putExtra("sessionKey", sessionKey);
         service.putExtra("audioEnabled", audioCheck.isChecked() && Build.VERSION.SDK_INT >= 29);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -339,7 +392,7 @@ public class MainActivity extends Activity {
         }
         hostAddress.setText("Alamat HP ini (IP lokal): " + NetworkAddress.getLocalIpv4(this)
                 + "  •  Port Host: " + VIDEO_PORT);
-        setStatus("Host siap. Masukkan IP Host pada HP Viewer untuk menyambung.");
+        setStatus("Host siap. Salin IP Host dan pairing key ke HP Viewer.");
     }
 
     @Override

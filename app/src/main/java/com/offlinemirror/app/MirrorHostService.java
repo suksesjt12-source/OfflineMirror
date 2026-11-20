@@ -174,6 +174,9 @@ public class MirrorHostService extends Service {
                     MediaFormat outputFormat = session.encoder.getOutputFormat();
                     byte[] csd0 = copyBuffer(outputFormat.getByteBuffer("csd-0"));
                     byte[] csd1 = copyBuffer(outputFormat.getByteBuffer("csd-1"));
+                    if (csd0.length == 0 && csd1.length == 0) {
+                        throw new IllegalStateException("H.264 encoder returned an empty codec configuration");
+                    }
                     if (streamHeaderSent) output.writeInt(-1);
                     writeStreamHeader(output, session.width, session.height, csd0, csd1);
                     streamHeaderSent = true;
@@ -326,19 +329,35 @@ public class MirrorHostService extends Service {
         int[] size = scaledSize(metrics, maxDimension);
 
         MediaCodec encoder = createEncoder(size[0], size[1], fps, bitrate);
-        Surface surface = encoder.createInputSurface();
-        VirtualDisplay virtualDisplay = projection.createVirtualDisplay(
-                "OfflineMirror", size[0], size[1], metrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                surface, null, null);
-        if (virtualDisplay == null) {
-            surface.release();
-            encoder.release();
-            throw new IllegalStateException("Unable to create virtual display");
+        Surface surface = null;
+        VirtualDisplay virtualDisplay = null;
+        try {
+            // The encoder must be running before VirtualDisplay starts feeding its input Surface.
+            surface = encoder.createInputSurface();
+            encoder.start();
+            requestSyncFrame(encoder);
+
+            virtualDisplay = projection.createVirtualDisplay(
+                    "OfflineMirror", size[0], size[1], metrics.densityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    surface, null, null);
+            if (virtualDisplay == null) {
+                throw new IllegalStateException("Unable to create virtual display");
+            }
+
+            return new EncoderSession(encoder, virtualDisplay, surface,
+                    size[0], size[1], display.getRotation());
+        } catch (Exception error) {
+            if (virtualDisplay != null) {
+                try { virtualDisplay.release(); } catch (Exception ignored) {}
+            }
+            if (surface != null) {
+                try { surface.release(); } catch (Exception ignored) {}
+            }
+            try { encoder.stop(); } catch (Exception ignored) {}
+            try { encoder.release(); } catch (Exception ignored) {}
+            throw error;
         }
-        encoder.start();
-        return new EncoderSession(encoder, virtualDisplay, surface,
-                size[0], size[1], display.getRotation());
     }
 
     private EncoderSession reconfigureSession(EncoderSession old, int maxDimension,
@@ -350,16 +369,39 @@ public class MirrorHostService extends Service {
         int[] size = scaledSize(metrics, maxDimension);
 
         MediaCodec nextEncoder = createEncoder(size[0], size[1], fps, bitrate);
-        Surface nextSurface = nextEncoder.createInputSurface();
+        Surface nextSurface = null;
+        try {
+            nextSurface = nextEncoder.createInputSurface();
+            nextEncoder.start();
+            requestSyncFrame(nextEncoder);
 
-        old.virtualDisplay.setSurface(null);
-        old.releaseEncoderOnly();
-        old.virtualDisplay.resize(size[0], size[1], metrics.densityDpi);
-        old.virtualDisplay.setSurface(nextSurface);
-        nextEncoder.start();
+            old.virtualDisplay.setSurface(null);
+            old.releaseEncoderOnly();
+            old.virtualDisplay.resize(size[0], size[1], metrics.densityDpi);
+            old.virtualDisplay.setSurface(nextSurface);
 
-        return new EncoderSession(nextEncoder, old.virtualDisplay, nextSurface,
-                size[0], size[1], display.getRotation());
+            return new EncoderSession(nextEncoder, old.virtualDisplay, nextSurface,
+                    size[0], size[1], display.getRotation());
+        } catch (Exception error) {
+            if (nextSurface != null) {
+                try { nextSurface.release(); } catch (Exception ignored) {}
+            }
+            try { nextEncoder.stop(); } catch (Exception ignored) {}
+            try { nextEncoder.release(); } catch (Exception ignored) {}
+            throw error;
+        }
+    }
+
+    private void requestSyncFrame(MediaCodec encoder) {
+        if (Build.VERSION.SDK_INT >= 19) {
+            try {
+                android.os.Bundle parameters = new android.os.Bundle();
+                parameters.putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0);
+                encoder.setParameters(parameters);
+            } catch (Exception error) {
+                android.util.Log.w("OfflineMirror", "Encoder did not accept sync-frame request", error);
+            }
+        }
     }
 
     private MediaCodec createEncoder(int width, int height, int fps, int bitrate)
