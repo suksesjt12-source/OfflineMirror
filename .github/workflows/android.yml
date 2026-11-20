@@ -37,7 +37,17 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build debug APK
-        run: gradle assembleDebug
+        run: |
+          set -o pipefail
+          gradle assembleDebug --stacktrace 2>&1 | tee build-output.log
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OfflineMirror-build-diagnostics
+          path: build-output.log
+          if-no-files-found: warn
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
