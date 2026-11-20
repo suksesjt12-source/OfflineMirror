@@ -70,6 +70,8 @@ public class MirrorHostService extends Service {
 
     private MediaProjection projection;
     private MediaProjection.Callback projectionCallback;
+    private volatile int capturedContentWidth = 0;
+    private volatile int capturedContentHeight = 0;
     private Thread videoThread;
     private Thread audioThread;
     private Thread controlThread;
@@ -121,12 +123,24 @@ public class MirrorHostService extends Service {
                 stopSelf();
                 return START_NOT_STICKY;
             }
+            capturedContentWidth = 0;
+            capturedContentHeight = 0;
             projectionCallback = new MediaProjection.Callback() {
                 @Override
                 public void onStop() {
                     running = false;
                     closeSockets();
                     stopSelf();
+                }
+
+                @Override
+                public void onCapturedContentResize(int width, int height) {
+                    if (width > 1 && height > 1) {
+                        capturedContentWidth = width;
+                        capturedContentHeight = height;
+                        android.util.Log.i("OfflineMirror", "Captured content resized: "
+                                + width + "x" + height);
+                    }
                 }
             };
             projection.registerCallback(projectionCallback, new Handler(getMainLooper()));
@@ -182,7 +196,16 @@ public class MirrorHostService extends Service {
             // The virtual display still uses the user's single MediaProjection session.
             session = createJpegSession(maxDimension, fps, output);
             while (running && videoClientSocket != null && !videoClientSocket.isClosed()) {
-                if (getDisplayRotation() != session.rotation) {
+                boolean resizeNeeded = getDisplayRotation() != session.rotation;
+                int captureWidth = capturedContentWidth;
+                int captureHeight = capturedContentHeight;
+                if (Build.VERSION.SDK_INT >= 34 && captureWidth > 1 && captureHeight > 1) {
+                    int[] expectedSize = scaledSize(
+                            captureWidth, captureHeight, Math.min(1280, maxDimension));
+                    resizeNeeded = expectedSize[0] != session.width
+                            || expectedSize[1] != session.height;
+                }
+                if (resizeNeeded) {
                     session = reconfigureJpegSession(session, maxDimension, fps);
                 }
                 Thread.sleep(100);
@@ -208,7 +231,7 @@ public class MirrorHostService extends Service {
         WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         Display display = wm.getDefaultDisplay();
         display.getRealMetrics(metrics);
-        int[] size = scaledSize(metrics, Math.min(1280, maxDimension));
+        int[] size = getScaledCaptureSize(metrics, Math.min(1280, maxDimension));
 
         HandlerThread thread = new HandlerThread("OfflineMirror-JPEG-Capture");
         thread.start();
@@ -252,11 +275,13 @@ public class MirrorHostService extends Service {
         WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         Display display = wm.getDefaultDisplay();
         display.getRealMetrics(metrics);
-        int[] size = scaledSize(metrics, Math.min(1280, maxDimension));
+        int[] size = getScaledCaptureSize(metrics, Math.min(1280, maxDimension));
 
         ImageReader nextReader = ImageReader.newInstance(
                 size[0], size[1], PixelFormat.RGBA_8888, 3);
         try {
+            // Prevent queued callbacks from writing obsolete frames after the next header.
+            old.closed = true;
             old.reader.setOnImageAvailableListener(null, null);
             old.virtualDisplay.setSurface(null);
             old.releaseImageResources();
@@ -324,8 +349,8 @@ public class MirrorHostService extends Service {
                     int red = buffer.get(p) & 0xFF;
                     int green = buffer.get(p + 1) & 0xFF;
                     int blue = buffer.get(p + 2) & 0xFF;
-                    int alpha = buffer.get(p + 3) & 0xFF;
-                    session.pixels[dstOffset + x] = Color.argb(alpha, red, green, blue);
+                    // Captured screen pixels are opaque; ignore alpha padding from OEM buffers.
+                    session.pixels[dstOffset + x] = Color.rgb(red, green, blue);
                 }
             }
 
@@ -335,7 +360,9 @@ public class MirrorHostService extends Service {
                 throw new IllegalStateException("JPEG compression failed");
             }
             byte[] packet = jpeg.toByteArray();
+            if (!running || session.closed) return;
             synchronized (session.output) {
+                if (!running || session.closed) return;
                 session.output.writeInt(packet.length);
                 session.output.writeLong(timestampNs / 1000L);
                 session.output.write(packet);
@@ -703,9 +730,22 @@ public class MirrorHostService extends Service {
         return name.contains("google") || name.contains("android") || name.contains("software");
     }
 
+    private int[] getScaledCaptureSize(DisplayMetrics metrics, int maxDimension) {
+        int width = capturedContentWidth;
+        int height = capturedContentHeight;
+        if (Build.VERSION.SDK_INT >= 34 && width > 1 && height > 1) {
+            return scaledSize(width, height, maxDimension);
+        }
+        return scaledSize(metrics, maxDimension);
+    }
+
     private int[] scaledSize(DisplayMetrics metrics, int maxDimension) {
-        int sourceWidth = Math.max(2, metrics.widthPixels);
-        int sourceHeight = Math.max(2, metrics.heightPixels);
+        return scaledSize(metrics.widthPixels, metrics.heightPixels, maxDimension);
+    }
+
+    private int[] scaledSize(int sourceWidth, int sourceHeight, int maxDimension) {
+        sourceWidth = Math.max(2, sourceWidth);
+        sourceHeight = Math.max(2, sourceHeight);
         float scale = Math.min(1f, (float) maxDimension /
                 (float) Math.max(sourceWidth, sourceHeight));
         return new int[]{even((int) (sourceWidth * scale)),
