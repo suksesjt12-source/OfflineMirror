@@ -8,6 +8,8 @@ import android.bluetooth.BluetoothDevice;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.SurfaceTexture;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioTrack;
@@ -18,8 +20,7 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.Surface;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
+import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -38,7 +39,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
-public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
+public class ViewerActivity extends Activity implements TextureView.SurfaceTextureListener {
     private static final int VIDEO_PORT = 48888;
     private static final int AUDIO_PORT = 48889;
     private static final int CONTROL_PORT = 48890;
@@ -47,7 +48,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private static final int REQUEST_BT_PERMISSION = 7382;
     private static final int REQUEST_ENABLE_BT = 7383;
 
-    private SurfaceView surfaceView;
+    private TextureView textureView;
+    private Surface videoSurface;
     private FrameLayout videoFrame;
     private int streamWidth;
     private int streamHeight;
@@ -146,15 +148,15 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
         videoFrame = new FrameLayout(this);
         videoFrame.setBackgroundColor(Color.BLACK);
-        surfaceView = new SurfaceView(this);
-        FrameLayout.LayoutParams videoSurfaceParams = new FrameLayout.LayoutParams(
+        textureView = new TextureView(this);
+        textureView.setOpaque(true);
+        textureView.setSurfaceTextureListener(this);
+        videoFrame.addView(textureView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.CENTER);
-        videoFrame.addView(surfaceView, videoSurfaceParams);
+                Gravity.CENTER));
         videoFrame.addOnLayoutChangeListener((view, left, top, right, bottom,
                                                oldLeft, oldTop, oldRight, oldBottom) ->
                 updateVideoSurfaceLayout());
-        surfaceView.getHolder().addCallback(this);
 
         gamepadOverlay = new GamepadOverlayView(this);
         gamepadOverlay.setListener(new GamepadOverlayView.Listener() {
@@ -372,19 +374,29 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     }
 
     @Override
-    public void surfaceCreated(SurfaceHolder holder) {
-        startReceiving(holder.getSurface());
+    public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int width, int height) {
+        videoSurface = new Surface(surfaceTexture);
+        updateVideoSurfaceLayout();
+        startReceiving(videoSurface);
         startControlConnection();
     }
 
     @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-        android.util.Log.i("OfflineMirror", "Viewer surface changed: " + width + "x" + height);
+    public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) {
+        updateVideoSurfaceLayout();
     }
 
     @Override
-    public void surfaceDestroyed(SurfaceHolder holder) {
+    public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
         stopReceiving();
+        // The decoder thread releases its Surface after MediaCodec has stopped.
+        videoSurface = null;
+        return true;
+    }
+
+    @Override
+    public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
+        // Rendering is handled directly by MediaCodec.
     }
 
     private synchronized void startReceiving(Surface surface) {
@@ -533,10 +545,9 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     }
 
     /**
-     * Fill the viewer viewport without distorting the stream. If the viewer
-     * and source orientations differ, rotate the SurfaceView by 90 degrees.
-     * Scaling uses center-crop so a portrait Host is not reduced to a narrow
-     * postage-stamp image when the Viewer turns landscape.
+     * TextureView lets the decoded image be transformed independently of the
+     * View bounds. Map the full texture to a centered, aspect-correct crop:
+     * no non-uniform stretching, with only the excess edges cropped.
      */
     private void setStreamDimensions(StreamConfig config) {
         streamWidth = config.width;
@@ -545,67 +556,80 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     }
 
     private void updateVideoSurfaceLayout() {
-        if (videoFrame == null || surfaceView == null) return;
-        int availableWidth = videoFrame.getWidth();
-        int availableHeight = videoFrame.getHeight();
-        if (availableWidth <= 0 || availableHeight <= 0) return;
+        if (videoFrame == null || textureView == null) return;
+        int viewWidth = videoFrame.getWidth();
+        int viewHeight = videoFrame.getHeight();
+        if (viewWidth <= 0 || viewHeight <= 0) return;
 
         if (streamWidth < 2 || streamHeight < 2) {
-            surfaceView.setRotation(0f);
-            ViewGroup.LayoutParams raw = surfaceView.getLayoutParams();
-            if (raw instanceof FrameLayout.LayoutParams) {
-                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) raw;
-                params.width = ViewGroup.LayoutParams.MATCH_PARENT;
-                params.height = ViewGroup.LayoutParams.MATCH_PARENT;
-                params.gravity = Gravity.CENTER;
-                surfaceView.setLayoutParams(params);
-            }
+            textureView.setTransform(new Matrix());
             if (gamepadOverlay != null) {
-                gamepadOverlay.setVideoTransform(0f, 0f,
-                        availableWidth, availableHeight, 0);
+                gamepadOverlay.setVideoTransform(0f, 0f, viewWidth, viewHeight, 0);
             }
             return;
         }
 
+        // Rotate only when the Host stream and Viewer viewport have opposite
+        // orientations. Positive 90 degrees is clockwise in screen coordinates.
         int rotation = 0;
-        if (availableWidth > availableHeight && streamWidth < streamHeight) {
+        if (viewWidth > viewHeight && streamWidth < streamHeight) {
             rotation = 90;
-        } else if (availableHeight > availableWidth && streamWidth > streamHeight) {
+        } else if (viewHeight > viewWidth && streamWidth > streamHeight) {
             rotation = -90;
         }
 
-        float visualSourceWidth = rotation == 0 ? streamWidth : streamHeight;
-        float visualSourceHeight = rotation == 0 ? streamHeight : streamWidth;
+        float displaySourceWidth = rotation == 0 ? streamWidth : streamHeight;
+        float displaySourceHeight = rotation == 0 ? streamHeight : streamWidth;
         float scale = Math.max(
-                (float) availableWidth / visualSourceWidth,
-                (float) availableHeight / visualSourceHeight);
+                (float) viewWidth / displaySourceWidth,
+                (float) viewHeight / displaySourceHeight);
+        float targetWidth = displaySourceWidth * scale;
+        float targetHeight = displaySourceHeight * scale;
+        float left = (viewWidth - targetWidth) * 0.5f;
+        float top = (viewHeight - targetHeight) * 0.5f;
+        float right = left + targetWidth;
+        float bottom = top + targetHeight;
 
-        // Layout dimensions stay in the stream's unrotated coordinate space.
-        // The SurfaceView's rotation swaps its visible width and height.
-        int surfaceWidth = Math.max(1, Math.round(streamWidth * scale));
-        int surfaceHeight = Math.max(1, Math.round(streamHeight * scale));
-        ViewGroup.LayoutParams rawParams = surfaceView.getLayoutParams();
-        if (rawParams instanceof FrameLayout.LayoutParams) {
-            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) rawParams;
-            if (params.width != surfaceWidth || params.height != surfaceHeight
-                    || params.gravity != Gravity.CENTER) {
-                params.width = surfaceWidth;
-                params.height = surfaceHeight;
-                params.gravity = Gravity.CENTER;
-                surfaceView.setLayoutParams(params);
-            }
-        }
-        if (surfaceView.getRotation() != rotation) {
-            surfaceView.setRotation(rotation);
+        // TextureView initially maps its buffer into the View rectangle. This
+        // matrix maps that rectangle into the correctly proportioned crop.
+        float[] source = {
+                0f, 0f,
+                viewWidth, 0f,
+                viewWidth, viewHeight,
+                0f, viewHeight
+        };
+        float[] destination;
+        if (rotation == 90) {
+            destination = new float[] {
+                    right, top,
+                    right, bottom,
+                    left, bottom,
+                    left, top
+            };
+        } else if (rotation == -90) {
+            destination = new float[] {
+                    left, bottom,
+                    left, top,
+                    right, top,
+                    right, bottom
+            };
+        } else {
+            destination = new float[] {
+                    left, top,
+                    right, top,
+                    right, bottom,
+                    left, bottom
+            };
         }
 
-        float displayedWidth = visualSourceWidth * scale;
-        float displayedHeight = visualSourceHeight * scale;
-        float left = (availableWidth - displayedWidth) * 0.5f;
-        float top = (availableHeight - displayedHeight) * 0.5f;
+        Matrix transform = new Matrix();
+        if (transform.setPolyToPoly(source, 0, destination, 0, 4)) {
+            textureView.setTransform(transform);
+        }
+
         if (gamepadOverlay != null) {
             gamepadOverlay.setVideoTransform(
-                    left, top, displayedWidth, displayedHeight, rotation);
+                    left, top, targetWidth, targetHeight, rotation);
         }
     }
 
@@ -710,6 +734,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             try { if (input != null) input.close(); } catch (Exception ignored) {}
             try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
             releaseDecoder(decoder);
+            try { surface.release(); } catch (Exception ignored) {}
         }
     }
 
