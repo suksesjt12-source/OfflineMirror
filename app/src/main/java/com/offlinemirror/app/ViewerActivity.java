@@ -126,18 +126,23 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         gamepadBar.setGravity(Gravity.CENTER_VERTICAL);
         gamepadBar.setPadding(dp(8), 0, dp(8), 0);
         gamepadStatus = new TextView(this);
-        gamepadStatus.setText("Gamepad Bluetooth: belum tersambung");
-        gamepadStatus.setTextColor(Color.rgb(186, 207, 230));
-        gamepadStatus.setTextSize(10);
+        gamepadStatus.setText("Bluetooth: belum tersambung");
+        gamepadStatus.setTextColor(Color.rgb(230, 238, 250));
+        gamepadStatus.setTextSize(9);
+        gamepadStatus.setMaxLines(2);
+        gamepadStatus.setMaxWidth(dp(190));
         gamepadBar.addView(gamepadStatus, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
         gamepadButton = new Button(this);
-        gamepadButton.setText("PAIR GAMEPAD");
-        gamepadButton.setTextSize(10);
+        gamepadButton.setText("AKTIFKAN BT");
+        gamepadButton.setTextSize(9);
+        gamepadButton.setMinHeight(dp(34));
+        gamepadButton.setMinimumHeight(dp(34));
         gamepadBar.addView(gamepadButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
         gamepadButton.setOnClickListener(v -> onGamepadButtonPressed());
-        gamepadBar.setVisibility(View.GONE);
+        gamepadBar.setBackgroundColor(0xBB111923);
+        gamepadBar.setPadding(dp(8), 0, dp(8), 0);
 
         videoFrame = new FrameLayout(this);
         videoFrame.setBackgroundColor(Color.BLACK);
@@ -169,8 +174,18 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         });
         videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        videoFrame.setClipChildren(true);
+        videoFrame.setClipToPadding(true);
         root.addView(videoFrame, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // This was previously created but hidden and never attached to the root.
+        // Keep Bluetooth setup reachable so the virtual HID device can actually connect.
+        FrameLayout.LayoutParams gamepadBarParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(44), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        gamepadBarParams.topMargin = dp(48);
+        root.addView(gamepadBar, gamepadBarParams);
+
         Button overlayToggle = new Button(this);
         overlayToggle.setText("SEMBUNYIKAN GAMEPAD");
         overlayToggle.setTextSize(10);
@@ -197,6 +212,10 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             return;
         }
 
+        if (bluetoothGamepad != null && bluetoothGamepad.isConnected()) {
+            gamepadStatus.setText("Gamepad TERHUBUNG. Input virtual siap dikirim ke HP Host.");
+            return;
+        }
         if (bluetoothGamepad != null && bluetoothGamepad.isRegistered()) {
             showPairedHostDevices();
             return;
@@ -262,8 +281,10 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         runOnUiThread(() -> {
             if (gamepadStatus != null) gamepadStatus.setText(message);
             if (gamepadButton != null) {
-                gamepadButton.setText(message.contains("TERHUBUNG")
-                        ? "GAMEPAD CONNECTED" : "PILIH HP HOST");
+                String lower = message.toLowerCase(java.util.Locale.ROOT);
+                gamepadButton.setText(message.contains("TERHUBUNG") ? "TERHUBUNG"
+                        : (lower.contains("terdaftar") ? "PILIH HOST"
+                        : (lower.contains("menghubungkan") ? "MENYAMBUNG..." : "AKTIFKAN BT")));
             }
         });
     }
@@ -512,9 +533,10 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     }
 
     /**
-     * Keep the decoded image at its source aspect ratio. The black videoFrame
-     * letterboxes the image instead of stretching portrait content across a
-     * landscape SurfaceView (or vice versa).
+     * Fill the viewer viewport without distorting the stream. If the viewer
+     * and source orientations differ, rotate the SurfaceView by 90 degrees.
+     * Scaling uses center-crop so a portrait Host is not reduced to a narrow
+     * postage-stamp image when the Viewer turns landscape.
      */
     private void setStreamDimensions(StreamConfig config) {
         streamWidth = config.width;
@@ -529,21 +551,39 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         if (availableWidth <= 0 || availableHeight <= 0) return;
 
         if (streamWidth < 2 || streamHeight < 2) {
+            surfaceView.setRotation(0f);
+            ViewGroup.LayoutParams raw = surfaceView.getLayoutParams();
+            if (raw instanceof FrameLayout.LayoutParams) {
+                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) raw;
+                params.width = ViewGroup.LayoutParams.MATCH_PARENT;
+                params.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                params.gravity = Gravity.CENTER;
+                surfaceView.setLayoutParams(params);
+            }
             if (gamepadOverlay != null) {
-                gamepadOverlay.setVideoContentRect(0f, 0f,
-                        availableWidth, availableHeight);
+                gamepadOverlay.setVideoTransform(0f, 0f,
+                        availableWidth, availableHeight, 0);
             }
             return;
         }
 
-        float scale = Math.min(
-                (float) availableWidth / (float) streamWidth,
-                (float) availableHeight / (float) streamHeight);
+        int rotation = 0;
+        if (availableWidth > availableHeight && streamWidth < streamHeight) {
+            rotation = 90;
+        } else if (availableHeight > availableWidth && streamWidth > streamHeight) {
+            rotation = -90;
+        }
+
+        float visualSourceWidth = rotation == 0 ? streamWidth : streamHeight;
+        float visualSourceHeight = rotation == 0 ? streamHeight : streamWidth;
+        float scale = Math.max(
+                (float) availableWidth / visualSourceWidth,
+                (float) availableHeight / visualSourceHeight);
+
+        // Layout dimensions stay in the stream's unrotated coordinate space.
+        // The SurfaceView's rotation swaps its visible width and height.
         int surfaceWidth = Math.max(1, Math.round(streamWidth * scale));
         int surfaceHeight = Math.max(1, Math.round(streamHeight * scale));
-        int left = (availableWidth - surfaceWidth) / 2;
-        int top = (availableHeight - surfaceHeight) / 2;
-
         ViewGroup.LayoutParams rawParams = surfaceView.getLayoutParams();
         if (rawParams instanceof FrameLayout.LayoutParams) {
             FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) rawParams;
@@ -555,10 +595,17 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 surfaceView.setLayoutParams(params);
             }
         }
+        if (surfaceView.getRotation() != rotation) {
+            surfaceView.setRotation(rotation);
+        }
 
+        float displayedWidth = visualSourceWidth * scale;
+        float displayedHeight = visualSourceHeight * scale;
+        float left = (availableWidth - displayedWidth) * 0.5f;
+        float top = (availableHeight - displayedHeight) * 0.5f;
         if (gamepadOverlay != null) {
-            gamepadOverlay.setVideoContentRect(
-                    left, top, surfaceWidth, surfaceHeight);
+            gamepadOverlay.setVideoTransform(
+                    left, top, displayedWidth, displayedHeight, rotation);
         }
     }
 
