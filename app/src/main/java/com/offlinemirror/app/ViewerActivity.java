@@ -9,7 +9,6 @@ import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Bundle;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -19,7 +18,6 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.net.InetSocketAddress;
@@ -29,7 +27,6 @@ import java.nio.ByteBuffer;
 public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private static final int VIDEO_PORT = 48888;
     private static final int AUDIO_PORT = 48889;
-    private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
 
     private SurfaceView surfaceView;
@@ -39,27 +36,15 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private boolean audioEnabled;
     private int videoPort = VIDEO_PORT;
     private int audioPort = AUDIO_PORT;
-    private int controlPort = CONTROL_PORT;
     private String viewerAddress = "IP belum tersedia";
+
     private volatile boolean running = false;
     private volatile Socket videoSocket;
     private volatile Socket audioSocket;
-    private volatile Socket controlSocket;
-    private volatile DataOutputStream controlOutput;
     private volatile Thread receiveThread;
     private volatile Thread audioThread;
-    private final Object receiverLock = new Object();
-    private Surface pendingSurface;
-    private boolean restartWorkerRunning = false;
-    private boolean activityDestroyed = false;
-
-    private float touchDownX;
-    private float touchDownY;
-    private long touchDownTime;
-
     private volatile String videoStatus = "Menyiapkan koneksi...";
-    private volatile String audioStatus = "Audio: waiting";
-    private volatile String controlStatus = "Touch: connecting";
+    private volatile String audioStatus = "Audio: nonaktif";
 
     private int dp(float value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
@@ -73,8 +58,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         audioEnabled = getIntent().getBooleanExtra("audioEnabled", false);
         videoPort = getIntent().getIntExtra("videoPort", VIDEO_PORT);
         audioPort = getIntent().getIntExtra("audioPort", AUDIO_PORT);
-        controlPort = getIntent().getIntExtra("controlPort", CONTROL_PORT);
         viewerAddress = NetworkAddress.getLocalIpv4(this);
+
         getWindow().setStatusBarColor(Color.BLACK);
         getWindow().setNavigationBarColor(Color.BLACK);
         enableImmersiveViewer();
@@ -93,13 +78,12 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
 
         surfaceView = new SurfaceView(this);
-        surfaceView.setBackgroundColor(Color.BLACK);
         root.addView(surfaceView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         surfaceView.getHolder().addCallback(this);
-        surfaceView.setOnTouchListener(this::handleViewerTouch);
         setContentView(root);
-        videoStatus = "Menghubungkan ke " + host + "...";
+
+        videoStatus = "Menghubungkan ke Host " + host + "...";
         updateStatus();
     }
 
@@ -120,7 +104,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-        // The H.264 decoder continues drawing to the same Surface while Android resizes it.
+        android.util.Log.i("OfflineMirror", "Viewer surface changed: " + width + "x" + height);
     }
 
     @Override
@@ -128,98 +112,45 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         stopReceiving();
     }
 
-    private void startReceiving(Surface surface) {
-        if (surface == null || !surface.isValid()) return;
-        synchronized (receiverLock) {
-            if (activityDestroyed) return;
-            pendingSurface = surface;
-            if (restartWorkerRunning) return;
-
-            Thread previous = receiveThread;
-            if (previous == null || !previous.isAlive()) {
-                launchReceiverLocked(surface);
-                return;
-            }
-
-            stopReceiverLocked();
-            restartWorkerRunning = true;
-            Thread previousAudio = audioThread;
-            Thread restartWorker = new Thread(() -> {
-                joinQuietly(previous);
-                joinQuietly(previousAudio);
-                synchronized (receiverLock) {
-                    restartWorkerRunning = false;
-                    Surface latest = pendingSurface;
-                    if (!activityDestroyed && latest != null && latest.isValid()
-                            && (receiveThread == null || !receiveThread.isAlive())) {
-                        launchReceiverLocked(latest);
-                    }
-                }
-            }, "OfflineMirror-Viewer-Restart");
-            restartWorker.start();
-        }
-    }
-
-    private void launchReceiverLocked(Surface surface) {
+    private synchronized void startReceiving(Surface surface) {
+        if (surface == null || !surface.isValid() || running) return;
         running = true;
         receiveThread = new Thread(() -> receiveLoop(surface), "OfflineMirror-Viewer");
         receiveThread.start();
     }
 
-    private void stopReceiverLocked() {
-        running = false;
-        try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
-        closeAuxiliaryConnections();
-    }
-
-    private void joinQuietly(Thread thread) {
-        if (thread == null || thread == Thread.currentThread()) return;
-        try {
-            thread.join();
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
     private void receiveLoop(Surface surface) {
         MediaCodec decoder = null;
         DataInputStream input = null;
+        long decodedFrames = 0;
+        long receivedBytes = 0;
         try {
             videoSocket = new Socket();
             videoSocket.setTcpNoDelay(true);
             videoSocket.connect(new InetSocketAddress(host, videoPort), 10_000);
             authenticateSocket(videoSocket);
-            videoStatus = "Terhubung. Menunggu encoder Host...";
-            updateStatus();
-
             input = new DataInputStream(
                     new BufferedInputStream(videoSocket.getInputStream(), 256 * 1024));
 
             StreamConfig config = readStreamHeader(input);
-            videoStatus = "Header diterima. Menyiapkan decoder...";
-            updateStatus();
             decoder = createDecoder(config, surface);
             videoStatus = "Decoder siap " + config.width + " × " + config.height
-                    + ". Menunggu frame pertama...";
+                    + ". Menunggu frame...";
             updateStatus();
 
-            connectControl();
             if (audioEnabled) startAudioPlayback();
 
             MediaCodec.BufferInfo outputInfo = new MediaCodec.BufferInfo();
-            boolean firstFrameRendered = false;
-            long receivedPackets = 0;
-            long receivedBytes = 0;
             while (running) {
                 int size = input.readInt();
 
-                // The Host sends -1 and a new header after changing screen orientation.
+                // Kept for protocol compatibility. The app is portrait-locked, so
+                // the Host should normally send only one fixed-size stream header.
                 if (size == -1) {
                     decoder = releaseDecoder(decoder);
                     config = readStreamHeader(input);
                     decoder = createDecoder(config, surface);
-                    firstFrameRendered = false;
-                    videoStatus = "Video " + config.width + " × " + config.height + " • rotated";
+                    videoStatus = "Stream baru " + config.width + " × " + config.height;
                     updateStatus();
                     continue;
                 }
@@ -227,62 +158,59 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 int flags = input.readInt();
                 long presentationTimeUs = input.readLong();
                 if (size <= 0 || size > 8 * 1024 * 1024) {
-                    throw new IllegalStateException("Invalid video packet");
+                    throw new IllegalStateException("Ukuran paket H.264 tidak valid: " + size);
                 }
+
                 byte[] packet = new byte[size];
                 input.readFully(packet);
-                receivedPackets++;
                 receivedBytes += size;
 
+                // The Host transports SPS/PPS in the stream header, not as packets.
                 if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
                         && (config.csd0.length > 0 || config.csd1.length > 0)) {
                     continue;
                 }
-                if (receivedPackets == 1) {
-                    videoStatus = "Data H.264 diterima. Menyiapkan frame...";
-                    updateStatus();
-                }
 
-                int inputIndex;
-                do {
+                int inputIndex = decoder.dequeueInputBuffer(10_000);
+                while (running && inputIndex < 0) {
                     inputIndex = decoder.dequeueInputBuffer(10_000);
-                    if (!running) break;
-                } while (inputIndex < 0);
-
+                }
                 if (!running || inputIndex < 0) break;
+
                 ByteBuffer inputBuffer = decoder.getInputBuffer(inputIndex);
                 if (inputBuffer == null || packet.length > inputBuffer.capacity()) {
-                    throw new IllegalStateException("Decoder input buffer is too small");
+                    throw new IllegalStateException("Buffer input decoder terlalu kecil");
                 }
                 inputBuffer.clear();
                 inputBuffer.put(packet);
-                // The Host sends SPS/PPS in the stream header and omits standalone
-                // codec-config buffers. Only EOS is a valid decoder input flag here.
-                int decoderFlags = flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM;
                 decoder.queueInputBuffer(inputIndex, 0, packet.length,
-                        presentationTimeUs, decoderFlags);
+                        presentationTimeUs, flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM);
 
+                // Drain every decoded output. Surface decoders must be given every
+                // output buffer for rendering; do not gate render=true on BufferInfo.size.
                 int outputIndex = decoder.dequeueOutputBuffer(outputInfo, 10_000);
                 while (outputIndex >= 0 && running) {
-                    boolean renderFrame = outputInfo.size > 0;
-                    decoder.releaseOutputBuffer(outputIndex, renderFrame);
-                    if (renderFrame && !firstFrameRendered) {
-                        firstFrameRendered = true;
-                        videoStatus = "Mirroring aktif • " + config.width + " × " + config.height;
+                    decoder.releaseOutputBuffer(outputIndex, true);
+                    decodedFrames++;
+                    if (decodedFrames == 1 || decodedFrames % 30 == 0) {
+                        videoStatus = "Mirroring aktif • " + config.width + " × " + config.height
+                                + " • " + decodedFrames + " frame";
                         updateStatus();
+                        android.util.Log.i("OfflineMirror", "Decoded frames=" + decodedFrames
+                                + " receivedBytes=" + receivedBytes);
                     }
                     outputIndex = decoder.dequeueOutputBuffer(outputInfo, 0);
                 }
-                if (receivedPackets == 1 || receivedPackets % 90 == 0) {
-                    android.util.Log.i("OfflineMirror", "Viewer video packets=" + receivedPackets
-                            + " bytes=" + receivedBytes + " resolution="
-                            + config.width + "x" + config.height);
+                if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    android.util.Log.i("OfflineMirror",
+                            "Decoder output format: " + decoder.getOutputFormat());
                 }
             }
         } catch (Exception error) {
-            android.util.Log.e("OfflineMirror", "Viewer video receive failed", error);
+            android.util.Log.e("OfflineMirror", "Viewer H.264 pipeline failed", error);
             if (running) {
-                videoStatus = "Gagal menerima video: " + error.getMessage();
+                videoStatus = "Video gagal: " + error.getClass().getSimpleName()
+                        + " • " + error.getMessage();
                 updateStatus();
             }
         } finally {
@@ -290,88 +218,16 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             try { if (input != null) input.close(); } catch (Exception ignored) {}
             try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
             releaseDecoder(decoder);
-            closeAuxiliaryConnections();
         }
     }
 
     private void authenticateSocket(Socket socket) throws Exception {
         if (sessionKey == null || sessionKey.length() < 16) {
-            throw new IllegalStateException("Pairing key tidak tersedia. Scan ulang QR Host.");
+            throw new IllegalStateException("Pairing key tidak tersedia. Scan QR Host lagi.");
         }
         DataOutputStream auth = new DataOutputStream(socket.getOutputStream());
         auth.writeUTF(sessionKey);
         auth.flush();
-    }
-
-    private void connectControl() {
-        try {
-            controlSocket = new Socket();
-            controlSocket.setTcpNoDelay(true);
-            controlSocket.connect(new InetSocketAddress(host, controlPort), 8_000);
-            DataOutputStream output = new DataOutputStream(
-                    new BufferedOutputStream(controlSocket.getOutputStream()));
-            output.writeUTF(sessionKey);
-            output.flush();
-            controlOutput = output;
-            controlStatus = "Touch: ready";
-        } catch (Exception error) {
-            controlStatus = "Touch unavailable";
-        }
-        updateStatus();
-    }
-
-    private boolean handleViewerTouch(View view, MotionEvent event) {
-        if (event.getAction() == MotionEvent.ACTION_DOWN) {
-            touchDownX = event.getX();
-            touchDownY = event.getY();
-            touchDownTime = event.getEventTime();
-            return true;
-        }
-        if (event.getAction() == MotionEvent.ACTION_UP) {
-            float upX = event.getX();
-            float upY = event.getY();
-            long duration = Math.max(1, event.getEventTime() - touchDownTime);
-            float width = Math.max(1f, view.getWidth());
-            float height = Math.max(1f, view.getHeight());
-            float x1 = clamp(touchDownX / width);
-            float y1 = clamp(touchDownY / height);
-            float x2 = clamp(upX / width);
-            float y2 = clamp(upY / height);
-            float distance = (float) Math.hypot(upX - touchDownX, upY - touchDownY);
-
-            if (duration >= 500 && distance < dp(20)) {
-                sendTouchCommand(2, x1, y1, x1, y1, (int) duration);
-            } else if (distance >= dp(20)) {
-                sendTouchCommand(3, x1, y1, x2, y2, (int) duration);
-            } else {
-                sendTouchCommand(1, x1, y1, x1, y1, 90);
-            }
-            return true;
-        }
-        return true;
-    }
-
-    private void sendTouchCommand(int type, float x1, float y1,
-                                  float x2, float y2, int duration) {
-        DataOutputStream output = controlOutput;
-        if (output == null) return;
-        try {
-            synchronized (output) {
-                output.writeByte(type);
-                output.writeFloat(x1);
-                output.writeFloat(y1);
-                if (type == 3) {
-                    output.writeFloat(x2);
-                    output.writeFloat(y2);
-                }
-                output.writeInt(Math.max(60, Math.min(1200, duration)));
-                output.flush();
-            }
-        } catch (Exception error) {
-            controlStatus = "Touch disconnected";
-            controlOutput = null;
-            updateStatus();
-        }
     }
 
     private void startAudioPlayback() {
@@ -388,12 +244,16 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             audioSocket.setTcpNoDelay(true);
             audioSocket.connect(new InetSocketAddress(host, audioPort), 12_000);
             authenticateSocket(audioSocket);
-
-            input = new DataInputStream(new BufferedInputStream(audioSocket.getInputStream(), 32 * 1024));
+            input = new DataInputStream(
+                    new BufferedInputStream(audioSocket.getInputStream(), 32 * 1024));
 
             int sampleRate = input.readInt();
             int channels = input.readInt();
             int encoding = input.readInt();
+            if (sampleRate < 8000 || sampleRate > 96000 || (channels != 1 && channels != 2)) {
+                throw new IllegalStateException("Format audio Host tidak valid");
+            }
+
             int channelMask = channels == 1
                     ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
             int minBuffer = AudioTrack.getMinBufferSize(
@@ -415,30 +275,32 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                     .build();
 
             if (track.getState() != AudioTrack.STATE_INITIALIZED) {
-                throw new IllegalStateException("Audio output could not initialize");
+                throw new IllegalStateException("Output audio tidak dapat diinisialisasi");
             }
             track.play();
-            audioStatus = "Audio: connected";
+            audioStatus = "Audio: terhubung";
             updateStatus();
 
             while (running) {
                 int count = input.readInt();
                 if (count <= 0 || count > 65536) {
-                    throw new IllegalStateException("Invalid audio packet");
+                    throw new IllegalStateException("Paket audio tidak valid");
                 }
                 byte[] pcm = new byte[count];
                 input.readFully(pcm);
                 int offset = 0;
                 while (offset < count && running) {
-                    int written = track.write(pcm, offset, count - offset, AudioTrack.WRITE_BLOCKING);
-                    if (written < 0) throw new IllegalStateException("Audio output stopped");
+                    int written = track.write(pcm, offset, count - offset,
+                            AudioTrack.WRITE_BLOCKING);
+                    if (written < 0) throw new IllegalStateException("Output audio terhenti");
                     offset += written;
                 }
             }
         } catch (Exception error) {
             if (running) {
-                audioStatus = "Audio unavailable";
+                audioStatus = "Audio tidak tersedia";
                 updateStatus();
+                android.util.Log.w("OfflineMirror", "Viewer audio failed", error);
             }
         } finally {
             if (track != null) {
@@ -453,39 +315,43 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
     private StreamConfig readStreamHeader(DataInputStream input) throws Exception {
         int magic = input.readInt();
-        if (magic != MAGIC) throw new IllegalStateException("Unsupported stream header");
+        if (magic != MAGIC) throw new IllegalStateException("Header stream tidak dikenal");
         int width = input.readInt();
         int height = input.readInt();
         if (width < 2 || height < 2 || width > 4096 || height > 4096) {
-            throw new IllegalStateException("Invalid video dimensions");
+            throw new IllegalStateException("Resolusi stream tidak valid");
         }
         byte[] csd0 = readConfig(input);
         byte[] csd1 = readConfig(input);
-        // Some hardware encoders send SPS/PPS as a separate codec-config buffer.
-        // The decoder accepts that buffer after it has been configured.
+        if (csd0.length == 0 && csd1.length == 0) {
+            throw new IllegalStateException("Konfigurasi H.264 Host kosong");
+        }
         return new StreamConfig(width, height, csd0, csd1);
     }
 
     private MediaCodec createDecoder(StreamConfig config, Surface surface) throws Exception {
+        if (surface == null || !surface.isValid()) {
+            throw new IllegalStateException("Surface Viewer belum siap");
+        }
         MediaFormat format = MediaFormat.createVideoFormat(
                 MediaFormat.MIMETYPE_VIDEO_AVC, config.width, config.height);
-        if (config.csd0.length > 0) format.setByteBuffer("csd-0", ByteBuffer.wrap(config.csd0));
-        if (config.csd1.length > 0) format.setByteBuffer("csd-1", ByteBuffer.wrap(config.csd1));
-        if (surface == null || !surface.isValid()) {
-            throw new IllegalStateException("Layar Viewer belum siap");
+        if (config.csd0.length > 0) {
+            format.setByteBuffer("csd-0", ByteBuffer.wrap(config.csd0));
         }
+        if (config.csd1.length > 0) {
+            format.setByteBuffer("csd-1", ByteBuffer.wrap(config.csd1));
+        }
+
         MediaCodec decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
         try {
             decoder.configure(format, surface, null, 0);
             decoder.start();
-            android.util.Log.i("OfflineMirror", "AVC decoder ready: "
-                    + config.width + "x" + config.height
-                    + " csd0=" + config.csd0.length + " csd1=" + config.csd1.length);
+            android.util.Log.i("OfflineMirror", "Using decoder " + decoder.getName()
+                    + " for " + config.width + "x" + config.height);
             return decoder;
         } catch (Exception error) {
             try { decoder.release(); } catch (Exception ignored) {}
-            throw new IllegalStateException("Decoder H.264 gagal untuk "
-                    + config.width + "x" + config.height + ": " + error.getMessage(), error);
+            throw new IllegalStateException("Decoder AVC gagal: " + error.getMessage(), error);
         }
     }
 
@@ -500,38 +366,26 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private byte[] readConfig(DataInputStream input) throws Exception {
         int size = input.readInt();
         if (size < 0 || size > 1024 * 1024) {
-            throw new IllegalStateException("Invalid codec configuration");
+            throw new IllegalStateException("Header codec rusak");
         }
         byte[] bytes = new byte[size];
         input.readFully(bytes);
         return bytes;
     }
 
-    private float clamp(float value) {
-        return Math.max(0f, Math.min(1f, value));
-    }
-
     private void updateStatus() {
         runOnUiThread(() -> {
             if (status != null) {
-                status.setText("HP ini (Viewer): " + viewerAddress
-                        + "   |   IP Host: " + host + "\n"
-                        + videoStatus + "  •  " + controlStatus + "  •  " + audioStatus);
+                status.setText("Viewer: " + viewerAddress + "  |  Host: " + host + "\n"
+                        + videoStatus + "  •  " + audioStatus);
             }
         });
     }
 
-    private void closeAuxiliaryConnections() {
-        try { if (audioSocket != null) audioSocket.close(); } catch (Exception ignored) {}
-        try { if (controlSocket != null) controlSocket.close(); } catch (Exception ignored) {}
-        controlOutput = null;
-    }
-
     private void stopReceiving() {
-        synchronized (receiverLock) {
-            pendingSurface = null;
-            stopReceiverLocked();
-        }
+        running = false;
+        try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
+        try { if (audioSocket != null) audioSocket.close(); } catch (Exception ignored) {}
     }
 
     @Override
@@ -542,11 +396,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
     @Override
     protected void onDestroy() {
-        synchronized (receiverLock) {
-            activityDestroyed = true;
-            pendingSurface = null;
-            stopReceiverLocked();
-        }
+        stopReceiving();
         super.onDestroy();
     }
 
