@@ -696,15 +696,12 @@ public class MirrorHostService extends Service {
                 output = new DataOutputStream(
                         new BufferedOutputStream(client.getOutputStream()));
 
-                // Tell the Viewer that this connection is the touch-control channel
-                // and whether Android Accessibility is enabled on the Host.
+                // Authenticated utility channel only; no touch or gamepad input.
                 output.writeInt(CONTROL_MAGIC);
-                output.writeBoolean(RemoteAccessibilityService.isEnabled());
                 output.flush();
 
                 while (running && !client.isClosed()) {
                     int type = input.readUnsignedByte();
-                    boolean accessibilityEnabled = RemoteAccessibilityService.isEnabled();
                     if (type == 7) {
                         output.writeByte(2);
                         output.flush();
@@ -750,31 +747,6 @@ public class MirrorHostService extends Service {
                         output.flush();
                         continue;
                     }
-                    if (type == 4) {
-                        throw new IOException("Wi-Fi gamepad input is disabled; use Bluetooth HID");
-                    }
-
-                    float x1 = input.readFloat();
-                    float y1 = input.readFloat();
-                    float x2 = x1;
-                    float y2 = y1;
-                    if (type == 3) {
-                        x2 = input.readFloat();
-                        y2 = input.readFloat();
-                    } else if (type != 1 && type != 2) {
-                        throw new IOException("Unknown remote control command");
-                    }
-                    int duration = input.readInt();
-                    if (!isUnitCoordinate(x1) || !isUnitCoordinate(y1)
-                            || !isUnitCoordinate(x2) || !isUnitCoordinate(y2)) {
-                        throw new IOException("Remote gesture coordinates are invalid");
-                    }
-                    if (accessibilityEnabled) {
-                        RemoteAccessibilityService.dispatchRemoteGesture(
-                                type, x1, y1, x2, y2, duration);
-                    }
-                    output.writeByte(accessibilityEnabled ? 1 : 0);
-                    output.flush();
                 }
             } catch (Exception error) {
                 if (running) {
