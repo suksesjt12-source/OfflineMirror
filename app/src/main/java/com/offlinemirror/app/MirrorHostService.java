@@ -14,7 +14,6 @@ import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
-import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
@@ -35,9 +34,6 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 
 public class MirrorHostService extends Service {
     private static final String CHANNEL_ID = "offline_mirror_stream";
@@ -200,7 +196,8 @@ public class MirrorHostService extends Service {
                 if (index < 0) continue;
 
                 try {
-                    if (streamHeaderSent && info.size > 0) {
+                    if (streamHeaderSent && info.size > 0
+                            && (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
                         ByteBuffer encoded = session.encoder.getOutputBuffer(index);
                         if (encoded != null) {
                             encoded.position(info.offset);
@@ -208,9 +205,7 @@ public class MirrorHostService extends Service {
                             byte[] packet = new byte[info.size];
                             encoded.get(packet);
                             output.writeInt(packet.length);
-                            int packetFlags = info.flags & (MediaCodec.BUFFER_FLAG_CODEC_CONFIG
-                                    | MediaCodec.BUFFER_FLAG_KEY_FRAME
-                                    | MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                            int packetFlags = info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM;
                             output.writeInt(packetFlags);
                             output.writeLong(info.presentationTimeUs);
                             output.write(packet);
@@ -386,11 +381,9 @@ public class MirrorHostService extends Service {
         Surface surface = null;
         VirtualDisplay virtualDisplay = null;
         try {
-            // The encoder must be running before VirtualDisplay starts feeding its input Surface.
+            // Match the original working H.264 path: create the VirtualDisplay
+            // while the configured encoder input surface is ready, then start it.
             surface = encoder.createInputSurface();
-            encoder.start();
-            requestSyncFrame(encoder);
-
             virtualDisplay = projection.createVirtualDisplay(
                     "OfflineMirror", size[0], size[1], metrics.densityDpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
@@ -398,7 +391,7 @@ public class MirrorHostService extends Service {
             if (virtualDisplay == null) {
                 throw new IllegalStateException("Unable to create virtual display");
             }
-            // Request an IDR frame only after the VirtualDisplay is feeding the encoder.
+            encoder.start();
             requestSyncFrame(encoder);
 
             return new EncoderSession(encoder, virtualDisplay, surface,
@@ -468,78 +461,21 @@ public class MirrorHostService extends Service {
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
         format.setInteger(MediaFormat.KEY_BIT_RATE, Math.max(500_000, bitrate));
         format.setInteger(MediaFormat.KEY_FRAME_RATE, Math.max(10, Math.min(60, fps)));
-        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2);
 
-        int targetFps = Math.max(10, Math.min(60, fps));
-        List<MediaCodecInfo> candidates = new ArrayList<>();
-        MediaCodecInfo[] all = new MediaCodecList(MediaCodecList.ALL_CODECS).getCodecInfos();
-        for (MediaCodecInfo info : all) {
-            if (!info.isEncoder()) continue;
-            for (String type : info.getSupportedTypes()) {
-                if (!MediaFormat.MIMETYPE_VIDEO_AVC.equalsIgnoreCase(type)) continue;
-                try {
-                    MediaCodecInfo.CodecCapabilities caps = info.getCapabilitiesForType(type);
-                    boolean surfaceInput = false;
-                    for (int color : caps.colorFormats) {
-                        if (color == MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) {
-                            surfaceInput = true;
-                            break;
-                        }
-                    }
-                    if (!surfaceInput) continue;
-                    MediaCodecInfo.VideoCapabilities videoCaps = caps.getVideoCapabilities();
-                    if (videoCaps != null
-                            && !videoCaps.areSizeAndRateSupported(width, height, targetFps)) {
-                        continue;
-                    }
-                    candidates.add(info);
-                } catch (Exception error) {
-                    android.util.Log.w("OfflineMirror", "Skipping AVC encoder " + info.getName(), error);
-                }
-                break;
-            }
-        }
-
-        // Prefer a hardware encoder; retry other compatible AVC encoders if configuration fails.
-        Collections.sort(candidates, (left, right) ->
-                Boolean.compare(isSoftwareEncoder(left), isSoftwareEncoder(right)));
-
-        Exception lastError = null;
-        for (MediaCodecInfo info : candidates) {
-            MediaCodec encoder = null;
-            try {
-                encoder = MediaCodec.createByCodecName(info.getName());
-                encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-                android.util.Log.i("OfflineMirror", "Selected AVC encoder: " + info.getName());
-                return encoder;
-            } catch (Exception error) {
-                lastError = error;
-                android.util.Log.w("OfflineMirror",
-                        "AVC encoder failed, trying next: " + info.getName(), error);
-                if (encoder != null) {
-                    try { encoder.release(); } catch (Exception ignored) {}
-                }
-            }
-        }
-
-        // A few OEM codec registries omit capabilities that their default encoder still accepts.
+        // Use Android's default AVC encoder selection. The previous manual
+        // hardware-codec ranking selected encoders that compiled successfully
+        // but produced no visible frames on some OEM devices.
+        MediaCodec encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
         try {
-            MediaCodec fallback = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
-            fallback.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-            android.util.Log.i("OfflineMirror", "Using default AVC encoder fallback");
-            return fallback;
+            encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            android.util.Log.i("OfflineMirror", "Using default AVC encoder: "
+                    + encoder.getName());
+            return encoder;
         } catch (Exception error) {
-            lastError = error;
+            try { encoder.release(); } catch (Exception ignored) {}
+            throw error;
         }
-
-        throw new IllegalStateException(
-                "Tidak ada encoder H.264 Surface yang cocok untuk resolusi ini", lastError);
-    }
-
-    private boolean isSoftwareEncoder(MediaCodecInfo info) {
-        if (Build.VERSION.SDK_INT >= 29) return !info.isHardwareAccelerated();
-        String name = info.getName().toLowerCase(java.util.Locale.ROOT);
-        return name.contains("google") || name.contains("android") || name.contains("software");
     }
 
     private int[] scaledSize(DisplayMetrics metrics, int maxDimension) {
