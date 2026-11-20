@@ -751,19 +751,7 @@ public class MirrorHostService extends Service {
                         continue;
                     }
                     if (type == 4) {
-                        int buttons = input.readInt();
-                        float leftX = input.readFloat();
-                        float leftY = input.readFloat();
-                        if (!isUnitAxis(leftX) || !isUnitAxis(leftY)) {
-                            throw new IOException("Wi-Fi gamepad axes are invalid");
-                        }
-                        if (accessibilityEnabled) {
-                            RemoteAccessibilityService.dispatchRemoteGamepadState(
-                                    buttons, leftX, leftY);
-                        }
-                        output.writeByte(accessibilityEnabled ? 1 : 0);
-                        output.flush();
-                        continue;
+                        throw new IOException("Wi-Fi gamepad input is disabled; use Bluetooth HID");
                     }
 
                     float x1 = input.readFloat();
@@ -794,9 +782,6 @@ public class MirrorHostService extends Service {
                             "Remote Control disconnected: " + error.getMessage());
                 }
             } finally {
-                if (RemoteAccessibilityService.isEnabled()) {
-                    RemoteAccessibilityService.dispatchRemoteGamepadState(0, 0f, 0f);
-                }
                 try { if (input != null) input.close(); } catch (Exception ignored) {}
                 try { if (output != null) output.close(); } catch (Exception ignored) {}
                 try { if (client != null) client.close(); } catch (Exception ignored) {}
@@ -808,11 +793,6 @@ public class MirrorHostService extends Service {
     private boolean isUnitCoordinate(float value) {
         return !Float.isNaN(value) && !Float.isInfinite(value)
                 && value >= 0f && value <= 1f;
-    }
-
-    private boolean isUnitAxis(float value) {
-        return !Float.isNaN(value) && !Float.isInfinite(value)
-                && value >= -1f && value <= 1f;
     }
 
     private Socket acceptAuthenticated(ServerSocket server, String channel) throws IOException {

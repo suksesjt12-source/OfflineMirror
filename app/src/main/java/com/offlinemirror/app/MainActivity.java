@@ -291,7 +291,7 @@ public class MainActivity extends Activity {
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Viewer tambahan pilih Mode Penonton agar hanya satu perangkat mengendalikan Host. Wi-Fi Gamepad memerlukan Aksesibilitas dan mensimulasikan sentuhan. Bluetooth HID memerlukan Android 9+, pairing Bluetooth, serta dukungan profil HID Device dari vendor. Kompatibilitas: Android 5.0+ untuk video, Android 7.0+ untuk sentuhan jarak jauh, Android 10+ untuk audio. Beberapa aplikasi membatasi capture atau sentuhan jarak jauh.");
+        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Gamepad virtual menggunakan Bluetooth HID saja (Android 9+ dan dukungan HID Device dari vendor; pair Viewer dan Host melalui Setelan Bluetooth). Wi-Fi dipakai untuk mirroring, tap, hold, swipe, volume, media, dan clipboard. Aktifkan Aksesibilitas Remote Touch pada Host. Kompatibilitas: Android 5.0+ untuk video, Android 7.0+ untuk sentuhan jarak jauh, Android 10+ untuk audio.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);

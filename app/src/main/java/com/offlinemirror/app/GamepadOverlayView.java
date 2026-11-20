@@ -14,7 +14,8 @@ import java.util.Map;
 /** Transparent touch controller for Bluetooth HID and remote touch gestures. */
 public final class GamepadOverlayView extends View {
     public interface Listener {
-        void onGamepadState(int buttons, float leftX, float leftY);
+        void onGamepadState(int buttons, float leftX, float leftY,
+                            float rightX, float rightY);
         void onDirectGesture(int type, float x1, float y1, float x2, float y2, int durationMs);
     }
 
@@ -63,9 +64,12 @@ public final class GamepadOverlayView extends View {
     private int videoRotation;
 
     private int buttons;
-    private int joystickPointer = -1;
-    private float axisX;
-    private float axisY;
+    private int leftStickPointer = -1;
+    private int rightStickPointer = -1;
+    private float leftAxisX;
+    private float leftAxisY;
+    private float rightAxisX;
+    private float rightAxisY;
     private float directDownX;
     private float directDownY;
     private float directLastX;
@@ -101,9 +105,10 @@ public final class GamepadOverlayView extends View {
     public void releaseAllInputs() {
         buttonPointers.clear();
         buttons = 0;
-        joystickPointer = -1;
+        leftStickPointer = -1;
+        rightStickPointer = -1;
         directPointer = -1;
-        axisX = axisY = 0f;
+        leftAxisX = leftAxisY = rightAxisX = rightAxisY = 0f;
         emitState();
     }
 
@@ -145,9 +150,14 @@ public final class GamepadOverlayView extends View {
         return getWidth() > getHeight();
     }
 
-    private float stickCenterX() {
+    private float leftStickCenterX() {
         if (layoutPreset == 2) return getWidth() * 0.82f;
-        return getWidth() * (isLandscapeLayout() ? 0.14f : 0.20f);
+        return getWidth() * (isLandscapeLayout() ? 0.14f : 0.19f);
+    }
+
+    private float rightStickCenterX() {
+        if (layoutPreset == 2) return getWidth() * 0.32f;
+        return getWidth() * (isLandscapeLayout() ? 0.66f : 0.69f);
     }
 
     private float stickCenterY() {
@@ -155,7 +165,7 @@ public final class GamepadOverlayView extends View {
     }
 
     private float dpadCenterX() {
-        return getWidth() * (layoutPreset == 2 ? 0.16f : 0.14f);
+        return getWidth() * (layoutPreset == 2 ? 0.86f : 0.14f);
     }
 
     private float dpadCenterY() {
@@ -220,20 +230,8 @@ public final class GamepadOverlayView extends View {
         super.onDraw(canvas);
         if (getWidth() == 0 || getHeight() == 0) return;
 
-        float radius = stickRadius();
-        float cx = stickCenterX();
-        float cy = stickCenterY();
-        fill.setColor(0x61303C50);
-        canvas.drawCircle(cx, cy, radius, fill);
-        stroke.setColor(0xDCE2EAF5);
-        canvas.drawCircle(cx, cy, radius, stroke);
-        float knobX = cx + axisX * radius * 0.66f;
-        float knobY = cy + axisY * radius * 0.66f;
-        fill.setColor(0xA9303C50);
-        canvas.drawCircle(knobX, knobY, radius * 0.39f, fill);
-        stroke.setColor(0xE7EAF0F7);
-        canvas.drawCircle(knobX, knobY, radius * 0.39f, stroke);
-        drawLabel(canvas, "L", knobX, knobY + dp(5), dp(15));
+        drawStick(canvas, leftStickCenterX(), stickCenterY(), leftAxisX, leftAxisY, "L");
+        drawStick(canvas, rightStickCenterX(), stickCenterY(), rightAxisX, rightAxisY, "R");
 
         drawDpad(canvas);
         drawAction(canvas, BUTTON_Y, "Y");
@@ -247,6 +245,22 @@ public final class GamepadOverlayView extends View {
         drawPill(canvas, BUTTON_START, "START");
         drawPill(canvas, BUTTON_R2, "R2");
         drawPill(canvas, BUTTON_R1, "R1");
+    }
+
+    private void drawStick(Canvas canvas, float cx, float cy,
+                           float axisX, float axisY, String name) {
+        float radius = stickRadius();
+        fill.setColor(0x61303C50);
+        canvas.drawCircle(cx, cy, radius, fill);
+        stroke.setColor(0xDCE2EAF5);
+        canvas.drawCircle(cx, cy, radius, stroke);
+        float knobX = cx + axisX * radius * 0.66f;
+        float knobY = cy + axisY * radius * 0.66f;
+        fill.setColor(0xA9303C50);
+        canvas.drawCircle(knobX, knobY, radius * 0.39f, fill);
+        stroke.setColor(0xE7EAF0F7);
+        canvas.drawCircle(knobX, knobY, radius * 0.39f, stroke);
+        drawLabel(canvas, name, knobX, knobY + dp(5), dp(15));
     }
 
     private void drawDpad(Canvas canvas) {
@@ -324,16 +338,26 @@ public final class GamepadOverlayView extends View {
         return 0;
     }
 
-    private void updateStick(float x, float y) {
-        float dx = (x - stickCenterX()) / Math.max(1f, stickRadius() * 0.78f) * sensitivity;
+    private void updateStick(float x, float y, boolean rightStick) {
+        float centerX = rightStick ? rightStickCenterX() : leftStickCenterX();
+        float dx = (x - centerX) / Math.max(1f, stickRadius() * 0.78f) * sensitivity;
         float dy = (y - stickCenterY()) / Math.max(1f, stickRadius() * 0.78f) * sensitivity;
         float distance = (float) Math.hypot(dx, dy);
-        if (distance > 1f) {
-            dx /= distance;
-            dy /= distance;
+        if (distance <= 0.06f) {
+            dx = 0f;
+            dy = 0f;
+        } else {
+            float normalized = Math.min(1f, (distance - 0.06f) / 0.94f);
+            dx = (dx / distance) * normalized;
+            dy = (dy / distance) * normalized;
         }
-        axisX = Math.max(-1f, Math.min(1f, dx));
-        axisY = Math.max(-1f, Math.min(1f, dy));
+        if (rightStick) {
+            rightAxisX = Math.max(-1f, Math.min(1f, dx));
+            rightAxisY = Math.max(-1f, Math.min(1f, dy));
+        } else {
+            leftAxisX = Math.max(-1f, Math.min(1f, dx));
+            leftAxisY = Math.max(-1f, Math.min(1f, dy));
+        }
     }
 
     private void rebuildButtonMask() {
@@ -344,7 +368,8 @@ public final class GamepadOverlayView extends View {
 
     private void emitState() {
         postInvalidateOnAnimation();
-        if (listener != null) listener.onGamepadState(buttons, axisX, axisY);
+        if (listener != null) listener.onGamepadState(
+                buttons, leftAxisX, leftAxisY, rightAxisX, rightAxisY);
     }
 
     private void pressPointer(MotionEvent event, int index) {
@@ -360,12 +385,21 @@ public final class GamepadOverlayView extends View {
             return;
         }
 
-        float dx = x - stickCenterX();
         float dy = y - stickCenterY();
-        if (joystickPointer == -1
-                && dx * dx + dy * dy <= Math.pow(stickRadius() + dp(25), 2)) {
-            joystickPointer = pointerId;
-            updateStick(x, y);
+        float leftDx = x - leftStickCenterX();
+        if (leftStickPointer == -1
+                && leftDx * leftDx + dy * dy <= Math.pow(stickRadius() + dp(25), 2)) {
+            leftStickPointer = pointerId;
+            updateStick(x, y, false);
+            emitState();
+            return;
+        }
+
+        float rightDx = x - rightStickCenterX();
+        if (rightStickPointer == -1
+                && rightDx * rightDx + dy * dy <= Math.pow(stickRadius() + dp(25), 2)) {
+            rightStickPointer = pointerId;
+            updateStick(x, y, true);
             emitState();
             return;
         }
@@ -384,10 +418,16 @@ public final class GamepadOverlayView extends View {
             rebuildButtonMask();
             emitState();
         }
-        if (pointerId == joystickPointer) {
-            joystickPointer = -1;
-            axisX = 0f;
-            axisY = 0f;
+        if (pointerId == leftStickPointer) {
+            leftStickPointer = -1;
+            leftAxisX = 0f;
+            leftAxisY = 0f;
+            emitState();
+        }
+        if (pointerId == rightStickPointer) {
+            rightStickPointer = -1;
+            rightAxisX = 0f;
+            rightAxisY = 0f;
             emitState();
         }
         if (pointerId == directPointer) {
@@ -434,10 +474,17 @@ public final class GamepadOverlayView extends View {
         }
 
         if (action == MotionEvent.ACTION_MOVE) {
-            if (joystickPointer != -1) {
-                int i = event.findPointerIndex(joystickPointer);
+            if (leftStickPointer != -1) {
+                int i = event.findPointerIndex(leftStickPointer);
                 if (i >= 0) {
-                    updateStick(event.getX(i), event.getY(i));
+                    updateStick(event.getX(i), event.getY(i), false);
+                    emitState();
+                }
+            }
+            if (rightStickPointer != -1) {
+                int i = event.findPointerIndex(rightStickPointer);
+                if (i >= 0) {
+                    updateStick(event.getX(i), event.getY(i), true);
                     emitState();
                 }
             }
@@ -459,10 +506,10 @@ public final class GamepadOverlayView extends View {
         if (action == MotionEvent.ACTION_CANCEL) {
             buttonPointers.clear();
             buttons = 0;
-            joystickPointer = -1;
+            leftStickPointer = -1;
+            rightStickPointer = -1;
             directPointer = -1;
-            axisX = 0f;
-            axisY = 0f;
+            leftAxisX = leftAxisY = rightAxisX = rightAxisY = 0f;
             emitState();
             return true;
         }

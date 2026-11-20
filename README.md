@@ -36,3 +36,14 @@ OfflineMirror streams an Android screen to another Android phone over the same p
 - Android vendors and individual games can restrict screen capture or Accessibility gestures.
 
 Screen-Off Mirroring uses a partial CPU wake lock while the Host display is off, but Android may still stop MediaProjection on some devices. The feature does not guarantee that every device keeps capturing after its screen is turned off.
+
+
+## Bluetooth dual-stick gamepad and remote touch (v1.33.0)
+
+- Virtual gamepad reports are sent through **Bluetooth HID only**. Wi-Fi no longer accepts gamepad-state packets.
+- The HID report includes a D-pad, 14 buttons, and four analog axes (left stick X/Y and right stick X/Y).
+- A dedicated display-priority report worker coalesces stale stick updates and sends button transitions immediately to reduce input queueing.
+- The Viewer overlay supports simultaneous multi-touch: use both sticks/buttons while tapping, holding, or swiping other areas of the mirrored screen.
+- Direct screen touch gestures, clipboard, volume and media commands continue over the authenticated Wi-Fi control channel.
+- Bluetooth HID Device is available only on Android 9+ devices whose vendor Bluetooth stack exposes the HID Device profile. Pair the Viewer and Host in Android Bluetooth settings before connecting from the Viewer.
+- Touch gesture control on the Host still requires enabling OfflineMirror Remote Touch in Android Accessibility settings.
