@@ -6,10 +6,13 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.display.DisplayManager;
+import android.media.AudioManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
@@ -20,17 +23,21 @@ import android.media.MediaFormat;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.Display;
+import android.view.KeyEvent;
 import android.view.Surface;
 import android.view.WindowManager;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -38,6 +45,10 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 
 public class MirrorHostService extends Service {
     private static final String CHANNEL_ID = "offline_mirror_stream";
@@ -47,6 +58,7 @@ public class MirrorHostService extends Service {
     private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
     private static final int CONTROL_MAGIC = 0x4F4D4354;
+    private static final int MAX_VIEWERS = 4;
     private static final long SCREEN_OFF_WAKE_LOCK_TIMEOUT_MS = 4L * 60L * 60L * 1000L;
 
     private volatile boolean running = false;
@@ -63,6 +75,10 @@ public class MirrorHostService extends Service {
     private ServerSocket controlServerSocket;
     private Socket videoClientSocket;
     private Socket audioClientSocket;
+    private final List<VideoClient> videoClients =
+            Collections.synchronizedList(new ArrayList<>());
+    private volatile byte[] latestStreamHeader;
+    private volatile Thread videoAcceptThread;
     private Socket controlClientSocket;
 
     private MediaProjection projection;
@@ -310,25 +326,21 @@ public class MirrorHostService extends Service {
     private void streamVideo(int maxDimension, int fps, int bitrate,
                              boolean adaptiveFps, int maxFps) {
         EncoderSession session = null;
+        Socket firstViewer = null;
         int activeFps = fps;
+        int activeBitrate = bitrate;
         PowerManager powerManager =
                 (PowerManager) getSystemService(Context.POWER_SERVICE);
         AdaptiveFpsController adaptiveController =
                 new AdaptiveFpsController(adaptiveFps, maxFps, powerManager);
-        DataOutputStream output = null;
         boolean streamHeaderSent = false;
         boolean streamHeaderEverSent = false;
+        long bitrateWindowStart = SystemClock.elapsedRealtime();
 
         try {
-            videoClientSocket = acceptAuthenticated(videoServerSocket, "video");
-            videoClientSocket.setTcpNoDelay(true);
-            // Keep the TCP queue small so a slow Viewer does not accumulate seconds
-            // of obsolete screen frames. TCP still preserves H.264 packet order.
-            videoClientSocket.setSendBufferSize(64 * 1024);
-            output = new DataOutputStream(new BufferedOutputStream(
-                    videoClientSocket.getOutputStream(), 8 * 1024));
-
-            session = createInitialSession(maxDimension, activeFps, bitrate);
+            firstViewer = acceptAuthenticated(videoServerSocket, "video");
+            videoClientSocket = firstViewer;
+            session = createInitialSession(maxDimension, activeFps, activeBitrate);
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
 
             long framesSent = 0;
@@ -337,9 +349,7 @@ public class MirrorHostService extends Service {
                     + session.width + "x" + session.height
                     + " rotation=" + session.rotation);
 
-            while (running && videoClientSocket != null && !videoClientSocket.isClosed()) {
-                // MediaProjection keeps the original encoder dimensions unless the
-                // VirtualDisplay and encoder are resized when the Host rotates.
+            while (running && videoServerSocket != null && !videoServerSocket.isClosed()) {
                 DisplayMetrics currentMetrics = getCaptureDisplayMetrics();
                 int[] currentSize = scaledSize(currentMetrics, maxDimension);
                 int currentRotation = getDisplayRotation();
@@ -348,9 +358,7 @@ public class MirrorHostService extends Service {
                         || currentSize[1] != session.height) {
                     int oldWidth = session.width;
                     int oldHeight = session.height;
-                    session = reconfigureSession(session, maxDimension, activeFps, bitrate);
-                    // Do not send frames from the new encoder until its SPS/PPS
-                    // header has been sent to the Viewer.
+                    session = reconfigureSession(session, maxDimension, activeFps, activeBitrate);
                     streamHeaderSent = false;
                     android.util.Log.i("OfflineMirror", "Host display changed "
                             + oldWidth + "x" + oldHeight + " -> "
@@ -366,7 +374,7 @@ public class MirrorHostService extends Service {
                     if (nextFps != activeFps) {
                         int previousFps = activeFps;
                         session = reconfigureSession(
-                                session, maxDimension, nextFps, bitrate);
+                                session, maxDimension, nextFps, activeBitrate);
                         activeFps = nextFps;
                         streamHeaderSent = false;
                         android.util.Log.i("OfflineMirror", "Adaptive FPS "
@@ -379,17 +387,29 @@ public class MirrorHostService extends Service {
                     MediaFormat outputFormat = session.encoder.getOutputFormat();
                     byte[] csd0 = copyBuffer(outputFormat.getByteBuffer("csd-0"));
                     byte[] csd1 = copyBuffer(outputFormat.getByteBuffer("csd-1"));
-                    android.util.Log.i("OfflineMirror", "AVC output format: "
-                            + session.width + "x" + session.height + " csd0="
-                            + csd0.length + " csd1=" + csd1.length);
                     if (csd0.length == 0 && csd1.length == 0) {
                         throw new IllegalStateException(
                                 "Encoder H.264 tidak memberikan SPS/PPS (codec config kosong)");
                     }
-                    if (streamHeaderEverSent) output.writeInt(-1);
-                    writeStreamHeader(output, session.width, session.height, csd0, csd1);
+                    byte[] header = encodeStreamHeader(session.width, session.height, csd0, csd1);
+                    latestStreamHeader = header;
+                    if (!streamHeaderEverSent) {
+                        addVideoClient(firstViewer, header);
+                        firstViewer = null;
+                        startAdditionalVideoAccept();
+                    } else {
+                        ByteArrayOutputStream updateBytes = new ByteArrayOutputStream();
+                        DataOutputStream update = new DataOutputStream(updateBytes);
+                        update.writeInt(-1);
+                        update.write(header);
+                        update.flush();
+                        broadcastVideoPacket(updateBytes.toByteArray());
+                    }
                     streamHeaderSent = true;
                     streamHeaderEverSent = true;
+                    android.util.Log.i("OfflineMirror", "H.264 header "
+                            + session.width + "x" + session.height
+                            + " viewers=" + videoClients.size());
                     continue;
                 }
                 if (index < 0) continue;
@@ -403,18 +423,25 @@ public class MirrorHostService extends Service {
                             encoded.limit(info.offset + info.size);
                             byte[] packet = new byte[info.size];
                             encoded.get(packet);
-                            output.writeInt(packet.length);
+
+                            ByteArrayOutputStream packetBytes = new ByteArrayOutputStream(
+                                    packet.length + 16);
+                            DataOutputStream packetOutput = new DataOutputStream(packetBytes);
+                            packetOutput.writeInt(packet.length);
                             int packetFlags = info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM;
-                            output.writeInt(packetFlags);
-                            output.writeLong(info.presentationTimeUs);
-                            output.write(packet);
-                            output.flush();
+                            packetOutput.writeInt(packetFlags);
+                            packetOutput.writeLong(info.presentationTimeUs);
+                            packetOutput.write(packet);
+                            packetOutput.flush();
+                            broadcastVideoPacket(packetBytes.toByteArray());
+
                             framesSent++;
                             adaptiveController.recordFrameSent();
                             bytesSent += packet.length;
                             if (framesSent == 1 || framesSent % 120 == 0) {
-                                android.util.Log.i("OfflineMirror", "H.264 frames sent="
-                                        + framesSent + " bytes=" + bytesSent
+                                android.util.Log.i("OfflineMirror", "H.264 frames=" + framesSent
+                                        + " bytes=" + bytesSent
+                                        + " viewers=" + videoClients.size()
                                         + " resolution=" + session.width + "x" + session.height);
                             }
                         }
@@ -424,12 +451,36 @@ public class MirrorHostService extends Service {
                     session.encoder.releaseOutputBuffer(index, false);
                 }
 
-                int nextFps = adaptiveController.evaluate(
-                        activeFps, SystemClock.elapsedRealtime());
+                long now = SystemClock.elapsedRealtime();
+                if (adaptiveFps && now - bitrateWindowStart >= 3000L) {
+                    int maxQueue = getMaximumViewerQueueDepth();
+                    int nextBitrate = activeBitrate;
+                    if (maxQueue >= 4) {
+                        nextBitrate = Math.max(750_000, (int) (activeBitrate * 0.82f));
+                    } else if (maxQueue <= 1) {
+                        nextBitrate = Math.min(bitrate, activeBitrate + Math.max(64_000, bitrate / 25));
+                    }
+                    if (nextBitrate != activeBitrate) {
+                        try {
+                            Bundle parameters = new Bundle();
+                            parameters.putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, nextBitrate);
+                            session.encoder.setParameters(parameters);
+                            android.util.Log.i("OfflineMirror", "Adaptive bitrate "
+                                    + activeBitrate + " -> " + nextBitrate + " bps");
+                            activeBitrate = nextBitrate;
+                        } catch (Exception unsupported) {
+                            android.util.Log.w("OfflineMirror",
+                                    "Encoder does not support live bitrate changes", unsupported);
+                        }
+                    }
+                    bitrateWindowStart = now;
+                }
+
+                int nextFps = adaptiveController.evaluate(activeFps, now);
                 if (nextFps != activeFps) {
                     int previousFps = activeFps;
                     session = reconfigureSession(
-                            session, maxDimension, nextFps, bitrate);
+                            session, maxDimension, nextFps, activeBitrate);
                     activeFps = nextFps;
                     streamHeaderSent = false;
                     android.util.Log.i("OfflineMirror", "Adaptive FPS "
@@ -443,10 +494,128 @@ public class MirrorHostService extends Service {
             running = false;
             closeSockets();
             if (session != null) session.release();
-            if (output != null) {
-                try { output.close(); } catch (Exception ignored) {}
+            if (firstViewer != null) {
+                try { firstViewer.close(); } catch (Exception ignored) {}
             }
             stopSelf();
+        }
+    }
+
+    private byte[] encodeStreamHeader(int width, int height, byte[] csd0, byte[] csd1)
+            throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream output = new DataOutputStream(bytes);
+        writeStreamHeader(output, width, height, csd0, csd1);
+        output.flush();
+        return bytes.toByteArray();
+    }
+
+    private void startAdditionalVideoAccept() {
+        if (videoAcceptThread != null && videoAcceptThread.isAlive()) return;
+        videoAcceptThread = new Thread(() -> {
+            while (running && videoServerSocket != null && !videoServerSocket.isClosed()) {
+                Socket candidate = null;
+                try {
+                    candidate = acceptAuthenticated(videoServerSocket, "video-viewer");
+                    byte[] header = latestStreamHeader;
+                    if (header == null || !addVideoClient(candidate, header)) {
+                        try { candidate.close(); } catch (Exception ignored) {}
+                    }
+                } catch (Exception error) {
+                    if (running) android.util.Log.w("OfflineMirror",
+                            "Additional Viewer rejected: " + error.getMessage());
+                    try { if (candidate != null) candidate.close(); } catch (Exception ignored) {}
+                    if (!running) return;
+                }
+            }
+        }, "OfflineMirror-Video-Accept");
+        videoAcceptThread.setDaemon(true);
+        videoAcceptThread.start();
+    }
+
+    private boolean addVideoClient(Socket socket, byte[] initialHeader) {
+        synchronized (videoClients) {
+            if (!running || videoClients.size() >= MAX_VIEWERS) return false;
+            try {
+                socket.setTcpNoDelay(true);
+                socket.setSendBufferSize(32 * 1024);
+                VideoClient client = new VideoClient(socket);
+                videoClients.add(client);
+                client.enqueue(initialHeader);
+                client.start();
+                return true;
+            } catch (Exception error) {
+                android.util.Log.w("OfflineMirror", "Could not add Viewer", error);
+                return false;
+            }
+        }
+    }
+
+    private void broadcastVideoPacket(byte[] packet) {
+        List<VideoClient> snapshot;
+        synchronized (videoClients) {
+            snapshot = new ArrayList<>(videoClients);
+        }
+        for (VideoClient client : snapshot) client.enqueue(packet);
+    }
+
+    private int getMaximumViewerQueueDepth() {
+        int maximum = 0;
+        synchronized (videoClients) {
+            for (VideoClient client : videoClients) {
+                maximum = Math.max(maximum, client.queue.size());
+            }
+        }
+        return maximum;
+    }
+
+    private final class VideoClient {
+        final Socket socket;
+        final DataOutputStream output;
+        final ArrayBlockingQueue<byte[]> queue = new ArrayBlockingQueue<>(8);
+        volatile boolean active = true;
+        Thread writerThread;
+
+        VideoClient(Socket socket) throws Exception {
+            this.socket = socket;
+            this.output = new DataOutputStream(new BufferedOutputStream(
+                    socket.getOutputStream(), 8 * 1024));
+        }
+
+        void start() {
+            writerThread = new Thread(() -> {
+                try {
+                    while (running && active && !socket.isClosed()) {
+                        byte[] packet = queue.take();
+                        output.write(packet);
+                        output.flush();
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                } catch (Exception error) {
+                    if (running) android.util.Log.w("OfflineMirror",
+                            "Viewer stream disconnected: " + error.getMessage());
+                } finally {
+                    close();
+                }
+            }, "OfflineMirror-Video-Viewer");
+            writerThread.setDaemon(true);
+            writerThread.start();
+        }
+
+        void enqueue(byte[] packet) {
+            if (!active) return;
+            if (!queue.offer(packet)) {
+                android.util.Log.w("OfflineMirror", "Disconnecting slow Viewer to protect latency");
+                close();
+            }
+        }
+
+        void close() {
+            active = false;
+            queue.clear();
+            try { socket.close(); } catch (Exception ignored) {}
+            synchronized (videoClients) { videoClients.remove(this); }
         }
     }
 
@@ -536,6 +705,51 @@ public class MirrorHostService extends Service {
                 while (running && !client.isClosed()) {
                     int type = input.readUnsignedByte();
                     boolean accessibilityEnabled = RemoteAccessibilityService.isEnabled();
+                    if (type == 7) {
+                        output.writeByte(2);
+                        output.flush();
+                        continue;
+                    }
+                    if (type == 5) {
+                        String clipboardText = input.readUTF();
+                        boolean accepted = clipboardText.length() <= 4096;
+                        if (accepted) {
+                            final String safeText = clipboardText;
+                            new Handler(Looper.getMainLooper()).post(() -> {
+                                ClipboardManager clipboard = (ClipboardManager)
+                                        getSystemService(Context.CLIPBOARD_SERVICE);
+                                if (clipboard != null) clipboard.setPrimaryClip(
+                                        ClipData.newPlainText("OfflineMirror", safeText));
+                            });
+                        }
+                        output.writeByte(accepted ? 1 : 0);
+                        output.flush();
+                        continue;
+                    }
+                    if (type == 6) {
+                        int action = input.readUnsignedByte();
+                        AudioManager manager = (AudioManager)
+                                getSystemService(Context.AUDIO_SERVICE);
+                        boolean accepted = manager != null;
+                        if (accepted && action == 1) {
+                            manager.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                                    AudioManager.ADJUST_LOWER, 0);
+                        } else if (accepted && action == 2) {
+                            manager.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                                    AudioManager.ADJUST_RAISE, 0);
+                        } else if (accepted && action == 3) {
+                            long eventTime = SystemClock.uptimeMillis();
+                            manager.dispatchMediaKeyEvent(new KeyEvent(eventTime, eventTime,
+                                    KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 0));
+                            manager.dispatchMediaKeyEvent(new KeyEvent(eventTime, eventTime,
+                                    KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 0));
+                        } else {
+                            accepted = false;
+                        }
+                        output.writeByte(accepted ? 1 : 0);
+                        output.flush();
+                        continue;
+                    }
                     if (type == 4) {
                         int buttons = input.readInt();
                         float leftX = input.readFloat();
@@ -631,7 +845,7 @@ public class MirrorHostService extends Service {
     private ServerSocket openServerSocket(int port) throws IOException {
         ServerSocket server = new ServerSocket();
         server.setReuseAddress(true);
-        server.bind(new InetSocketAddress(port), 1);
+        server.bind(new InetSocketAddress(port), 4);
         return server;
     }
 
@@ -802,6 +1016,10 @@ public class MirrorHostService extends Service {
     }
 
     private void closeSockets() {
+        synchronized (videoClients) {
+            for (VideoClient client : new ArrayList<>(videoClients)) client.close();
+            videoClients.clear();
+        }
         try { if (videoClientSocket != null) videoClientSocket.close(); } catch (Exception ignored) {}
         try { if (videoServerSocket != null) videoServerSocket.close(); } catch (Exception ignored) {}
         try { if (audioClientSocket != null) audioClientSocket.close(); } catch (Exception ignored) {}

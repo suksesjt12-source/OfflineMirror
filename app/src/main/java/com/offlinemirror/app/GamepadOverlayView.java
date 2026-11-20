@@ -39,6 +39,20 @@ public final class GamepadOverlayView extends View {
     private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Map<Integer, Integer> buttonPointers = new HashMap<>();
     private Listener listener;
+    private float sensitivity = 1.0f;
+    private int layoutPreset = 0;
+
+    public void setSensitivity(float value) {
+        sensitivity = Math.max(0.5f, Math.min(1.8f, value));
+    }
+
+    /** 0 = Classic, 1 = Compact, 2 = Left-handed. */
+    public void setLayoutPreset(int preset) {
+        layoutPreset = Math.max(0, Math.min(2, preset));
+        invalidate();
+    }
+
+    private float sizeScale() { return layoutPreset == 1 ? 0.78f : 1.0f; }
 
     // The visible video is center-cropped to fill the viewer. These values map
     // a visible touch back to the original stream, including a 90-degree rotation.
@@ -132,6 +146,7 @@ public final class GamepadOverlayView extends View {
     }
 
     private float stickCenterX() {
+        if (layoutPreset == 2) return getWidth() * 0.82f;
         return getWidth() * (isLandscapeLayout() ? 0.14f : 0.20f);
     }
 
@@ -140,7 +155,7 @@ public final class GamepadOverlayView extends View {
     }
 
     private float dpadCenterX() {
-        return getWidth() * (isLandscapeLayout() ? 0.14f : 0.14f);
+        return getWidth() * (layoutPreset == 2 ? 0.16f : 0.14f);
     }
 
     private float dpadCenterY() {
@@ -148,7 +163,7 @@ public final class GamepadOverlayView extends View {
     }
 
     private float dpadRadius() {
-        return Math.min(dp(20), Math.min(getWidth(), getHeight()) * 0.05f);
+        return Math.min(dp(20) * sizeScale(), Math.min(getWidth(), getHeight()) * 0.05f);
     }
 
     private float dpadOffset() {
@@ -171,24 +186,26 @@ public final class GamepadOverlayView extends View {
 
     private float stickRadius() {
         float shortSide = Math.min(getWidth(), getHeight());
-        return Math.min(dp(45), shortSide * 0.13f);
+        return Math.min(dp(45) * sizeScale(), shortSide * 0.13f);
     }
 
     private float actionRadius() {
-        return Math.min(dp(21), Math.min(getWidth(), getHeight()) * 0.055f);
+        return Math.min(dp(21) * sizeScale(), Math.min(getWidth(), getHeight()) * 0.055f);
     }
 
     private float buttonX(int bit) {
-        if (bit == BUTTON_A || bit == BUTTON_Y) return getWidth() * 0.88f;
-        if (bit == BUTTON_B) return getWidth() * 0.94f;
-        if (bit == BUTTON_X) return getWidth() * 0.82f;
-        if (bit == BUTTON_L1) return getWidth() * 0.08f;
-        if (bit == BUTTON_L2) return getWidth() * 0.20f;
-        if (bit == BUTTON_SELECT) return getWidth() * 0.43f;
-        if (bit == BUTTON_START) return getWidth() * 0.57f;
-        if (bit == BUTTON_R2) return getWidth() * 0.80f;
-        if (bit == BUTTON_R1) return getWidth() * 0.92f;
-        return getWidth() * 0.88f;
+        float x;
+        if (bit == BUTTON_A || bit == BUTTON_Y) x = getWidth() * 0.88f;
+        else if (bit == BUTTON_B) x = getWidth() * 0.94f;
+        else if (bit == BUTTON_X) x = getWidth() * 0.82f;
+        else if (bit == BUTTON_L1) x = getWidth() * 0.08f;
+        else if (bit == BUTTON_L2) x = getWidth() * 0.20f;
+        else if (bit == BUTTON_SELECT) x = getWidth() * 0.43f;
+        else if (bit == BUTTON_START) x = getWidth() * 0.57f;
+        else if (bit == BUTTON_R2) x = getWidth() * 0.80f;
+        else if (bit == BUTTON_R1) x = getWidth() * 0.92f;
+        else x = getWidth() * 0.88f;
+        return layoutPreset == 2 ? getWidth() - x : x;
     }
 
     private float buttonY(int bit) {
@@ -308,8 +325,8 @@ public final class GamepadOverlayView extends View {
     }
 
     private void updateStick(float x, float y) {
-        float dx = (x - stickCenterX()) / Math.max(1f, stickRadius() * 0.78f);
-        float dy = (y - stickCenterY()) / Math.max(1f, stickRadius() * 0.78f);
+        float dx = (x - stickCenterX()) / Math.max(1f, stickRadius() * 0.78f) * sensitivity;
+        float dy = (y - stickCenterY()) / Math.max(1f, stickRadius() * 0.78f) * sensitivity;
         float distance = (float) Math.hypot(dx, dy);
         if (distance > 1f) {
             dx /= distance;

@@ -108,13 +108,13 @@ public class MainActivity extends Activity {
 
         addSectionTitle(page, "HOST MODE — SHARE THIS PHONE");
         addLabel(page, "Video quality");
-        resolutionSpinner = addSpinner(page, new String[]{"720p (recommended)", "1080p (higher bandwidth)"});
+        resolutionSpinner = addSpinner(page, new String[]{"480p (hemat bandwidth)", "720p (recommended)", "1080p (higher bandwidth)"});
         addLabel(page, "Batas frame rate maksimum");
         fpsSpinner = addSpinner(page, new String[]{"15 FPS", "24 FPS", "30 FPS", "60 FPS"});
         fpsSpinner.setSelection(2);
 
         adaptiveFpsCheck = new CheckBox(this);
-        adaptiveFpsCheck.setText("Adaptive FPS otomatis sesuai kemampuan HP");
+        adaptiveFpsCheck.setText("Smart Network: FPS dan bitrate adaptif sesuai jaringan/kemampuan HP");
         adaptiveFpsCheck.setTextColor(Color.rgb(196, 207, 224));
         adaptiveFpsCheck.setTextSize(13);
         adaptiveFpsCheck.setChecked(true);
@@ -291,7 +291,7 @@ public class MainActivity extends Activity {
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP, port, dan pairing key sesi Host. Untuk dua HP, aktifkan hotspot di salah satu HP lalu sambungkan HP lainnya ke hotspot tersebut. Internet tidak diperlukan. Kompatibilitas: Android 5.0+ untuk tampilan layar, Android 7.0+ untuk kendali sentuh, dan Android 10+ untuk audio. Beberapa aplikasi dapat membatasi capture layar.");
+        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Viewer tambahan pilih Mode Penonton agar hanya satu perangkat mengendalikan Host. Wi-Fi Gamepad memerlukan Aksesibilitas dan mensimulasikan sentuhan. Bluetooth HID memerlukan Android 9+, pairing Bluetooth, serta dukungan profil HID Device dari vendor. Kompatibilitas: Android 5.0+ untuk video, Android 7.0+ untuk sentuhan jarak jauh, Android 10+ untuk audio. Beberapa aplikasi membatasi capture atau sentuhan jarak jauh.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
@@ -572,7 +572,8 @@ public class MainActivity extends Activity {
             return;
         }
 
-        int maxDimension = resolutionSpinner.getSelectedItemPosition() == 0 ? 1280 : 1920;
+        int maxDimension = new int[]{854, 1280, 1920}[
+                Math.max(0, Math.min(2, resolutionSpinner.getSelectedItemPosition()))];
         int maxFps = new int[]{15, 24, 30, 60}[fpsSpinner.getSelectedItemPosition()];
         boolean adaptiveFps = adaptiveFpsCheck != null && adaptiveFpsCheck.isChecked();
         int fps = adaptiveFps ? Math.min(30, maxFps) : maxFps;
