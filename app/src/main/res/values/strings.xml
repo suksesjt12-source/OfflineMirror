@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OfflineMirror</string>
+    <string name="remote_touch_service_description">Allows a paired OfflineMirror Viewer on your local network to send taps and swipes to this phone while screen sharing is active. Enable only when you intend to use remote touch.</string>
+</resources>
