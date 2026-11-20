@@ -3,6 +3,7 @@ package com.offlinemirror.app;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.DisplayMetrics;
@@ -36,11 +37,13 @@ public class RemoteAccessibilityService extends AccessibilityService {
     }
 
     public static boolean isEnabled() {
-        return instance != null;
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && instance != null;
     }
 
     public static void dispatchRemoteGesture(int type, float x1, float y1,
                                              float x2, float y2, int durationMs) {
+        // dispatchGesture() was introduced in Android 7.0 (API 24).
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
         RemoteAccessibilityService service = instance;
         if (service == null) return;
 
