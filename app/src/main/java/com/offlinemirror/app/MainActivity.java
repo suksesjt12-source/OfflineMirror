@@ -29,8 +29,6 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.EncodeHintType;
@@ -236,10 +234,9 @@ public class MainActivity extends Activity {
 
     private void beginHostFlow() {
         if (audioCheck.isChecked() && Build.VERSION.SDK_INT >= 29 &&
-                ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                         != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_AUDIO);
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_AUDIO);
             return;
         }
         requestScreenCapture();
