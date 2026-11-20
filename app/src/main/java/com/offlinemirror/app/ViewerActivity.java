@@ -9,6 +9,7 @@ import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -27,6 +28,7 @@ import java.nio.ByteBuffer;
 public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private static final int VIDEO_PORT = 48888;
     private static final int AUDIO_PORT = 48889;
+    private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
 
     private SurfaceView surfaceView;
@@ -36,15 +38,23 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private boolean audioEnabled;
     private int videoPort = VIDEO_PORT;
     private int audioPort = AUDIO_PORT;
+    private int controlPort = CONTROL_PORT;
     private String viewerAddress = "IP belum tersedia";
 
     private volatile boolean running = false;
     private volatile Socket videoSocket;
     private volatile Socket audioSocket;
+    private volatile Socket controlSocket;
+    private volatile DataOutputStream controlOutput;
     private volatile Thread receiveThread;
     private volatile Thread audioThread;
+    private volatile Thread controlThread;
     private volatile String videoStatus = "Menyiapkan koneksi...";
     private volatile String audioStatus = "Audio: nonaktif";
+    private volatile String controlStatus = "Remote Control: menghubungkan";
+    private float touchDownX;
+    private float touchDownY;
+    private long touchDownTime;
 
     private int dp(float value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
@@ -58,6 +68,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         audioEnabled = getIntent().getBooleanExtra("audioEnabled", false);
         videoPort = getIntent().getIntExtra("videoPort", VIDEO_PORT);
         audioPort = getIntent().getIntExtra("audioPort", AUDIO_PORT);
+        controlPort = getIntent().getIntExtra("controlPort", CONTROL_PORT);
         viewerAddress = NetworkAddress.getLocalIpv4(this);
 
         getWindow().setStatusBarColor(Color.BLACK);
@@ -81,6 +92,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         root.addView(surfaceView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         surfaceView.getHolder().addCallback(this);
+        surfaceView.setOnTouchListener(this::handleRemoteTouch);
         setContentView(root);
 
         videoStatus = "Menghubungkan ke Host " + host + "...";
@@ -100,6 +112,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
         startReceiving(holder.getSurface());
+        startControlConnection();
     }
 
     @Override
@@ -117,6 +130,97 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         running = true;
         receiveThread = new Thread(() -> receiveLoop(surface), "OfflineMirror-Viewer");
         receiveThread.start();
+    }
+
+    private void startControlConnection() {
+        if (controlThread != null && controlThread.isAlive()) return;
+        controlThread = new Thread(() -> {
+            Socket candidate = new Socket();
+            try {
+                candidate.setTcpNoDelay(true);
+                candidate.connect(new InetSocketAddress(host, controlPort), 8_000);
+                DataOutputStream output = new DataOutputStream(
+                        new BufferedOutputStream(candidate.getOutputStream()));
+                output.writeUTF(sessionKey);
+                output.flush();
+                controlSocket = candidate;
+                controlOutput = output;
+                controlStatus = "Remote Control: terhubung";
+                updateStatus();
+                android.util.Log.i("OfflineMirror", "Remote Control channel connected");
+            } catch (Exception error) {
+                try { candidate.close(); } catch (Exception ignored) {}
+                controlOutput = null;
+                controlStatus = "Remote Control: tidak tersambung";
+                updateStatus();
+                android.util.Log.w("OfflineMirror",
+                        "Remote Control connection unavailable: " + error.getMessage());
+            }
+        }, "OfflineMirror-Remote-Control-Client");
+        controlThread.start();
+    }
+
+    private boolean handleRemoteTouch(View view, MotionEvent event) {
+        if (event.getAction() == MotionEvent.ACTION_DOWN) {
+            touchDownX = event.getX();
+            touchDownY = event.getY();
+            touchDownTime = event.getEventTime();
+            return true;
+        }
+        if (event.getAction() == MotionEvent.ACTION_UP) {
+            float width = Math.max(1f, view.getWidth());
+            float height = Math.max(1f, view.getHeight());
+            float x1 = clamp(touchDownX / width);
+            float y1 = clamp(touchDownY / height);
+            float x2 = clamp(event.getX() / width);
+            float y2 = clamp(event.getY() / height);
+            long duration = Math.max(1L, event.getEventTime() - touchDownTime);
+            float distance = (float) Math.hypot(
+                    event.getX() - touchDownX, event.getY() - touchDownY);
+
+            if (distance >= dp(20)) {
+                sendRemoteGesture(3, x1, y1, x2, y2, (int) duration);
+            } else if (duration >= 500) {
+                sendRemoteGesture(2, x1, y1, x1, y1, (int) duration);
+            } else {
+                sendRemoteGesture(1, x1, y1, x1, y1, 90);
+            }
+            return true;
+        }
+        return event.getAction() == MotionEvent.ACTION_CANCEL;
+    }
+
+    private void sendRemoteGesture(int type, float x1, float y1,
+                                   float x2, float y2, int duration) {
+        DataOutputStream output = controlOutput;
+        if (output == null) {
+            controlStatus = "Remote Control: aktifkan di HP Host";
+            updateStatus();
+            return;
+        }
+        try {
+            synchronized (output) {
+                output.writeByte(type);
+                output.writeFloat(x1);
+                output.writeFloat(y1);
+                if (type == 3) {
+                    output.writeFloat(x2);
+                    output.writeFloat(y2);
+                }
+                output.writeInt(Math.max(60, Math.min(1200, duration)));
+                output.flush();
+            }
+        } catch (Exception error) {
+            controlOutput = null;
+            controlStatus = "Remote Control: koneksi terputus";
+            try { if (controlSocket != null) controlSocket.close(); } catch (Exception ignored) {}
+            updateStatus();
+            android.util.Log.w("OfflineMirror", "Could not send remote gesture", error);
+        }
+    }
+
+    private float clamp(float value) {
+        return Math.max(0f, Math.min(1f, value));
     }
 
     private void receiveLoop(Surface surface) {
@@ -377,7 +481,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         runOnUiThread(() -> {
             if (status != null) {
                 status.setText("Viewer: " + viewerAddress + "  |  Host: " + host + "\n"
-                        + videoStatus + "  •  " + audioStatus);
+                        + videoStatus + "  •  " + audioStatus + "  •  " + controlStatus);
             }
         });
     }
@@ -386,6 +490,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         running = false;
         try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
         try { if (audioSocket != null) audioSocket.close(); } catch (Exception ignored) {}
+        try { if (controlSocket != null) controlSocket.close(); } catch (Exception ignored) {}
+        controlOutput = null;
     }
 
     @Override
