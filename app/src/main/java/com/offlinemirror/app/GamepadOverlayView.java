@@ -61,13 +61,6 @@ public final class GamepadOverlayView extends View {
     private float leftAxisY;
     private float rightAxisX;
     private float rightAxisY;
-    private float directDownX;
-    private float directDownY;
-    private float directLastX;
-    private float directLastY;
-    private long directDownTime;
-    private int directPointer = -1;
-
     public GamepadOverlayView(Context context) {
         super(context);
         init();
@@ -279,7 +272,7 @@ public final class GamepadOverlayView extends View {
     private int hitButton(float x, float y) {
         int[] directions = {BUTTON_DPAD_UP, BUTTON_DPAD_DOWN,
                 BUTTON_DPAD_LEFT, BUTTON_DPAD_RIGHT};
-        float dpadHitRadius = dpadRadius() + dp(2);
+        float dpadHitRadius = dpadRadius() + dp(1);
         for (int bit : directions) {
             float dx = x - dpadX(bit);
             float dy = y - dpadY(bit);

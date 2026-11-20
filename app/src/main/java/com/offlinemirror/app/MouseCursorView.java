@@ -79,8 +79,8 @@ public final class MouseCursorView extends View {
         pointer.lineTo(cursorX + size * 0.43f, cursorY + size * 0.66f);
         pointer.lineTo(cursorX + size * 0.88f, cursorY + size * 0.66f);
         pointer.close();
-        canvas.drawPath(pointer, outline);
         canvas.drawPath(pointer, fill);
+        canvas.drawPath(pointer, outline);
     }
 
     @Override
