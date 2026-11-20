@@ -15,7 +15,7 @@ OfflineMirror mirrors an Android display to another Android phone over the same 
 ## Bluetooth HID gamepad and mouse
 
 - Gamepad and relative mouse are separate HID top-level collections under a composite Bluetooth HID profile.
-- The SDP device class advertises the combo mouse profile together with the gamepad subclass, instead of advertising only a gamepad. This is needed for hosts to recognize both input collections.
+- The SDP device class advertises the mouse subclass together with the gamepad subclass, instead of advertising only a gamepad. This is needed for hosts to recognize both input collections.
 - Gamepad reports use Android-oriented button usage IDs, a hat-switch D-pad, X/Y and Z/Rz axes, and C5/C4 trigger axes.
 - Mouse movement is accumulated before reports are sent. Fast trackpad movement is split into valid signed HID packets instead of replacing earlier movement samples.
 - Mouse button press/release transitions are sent independently from movement so clicks are not lost.

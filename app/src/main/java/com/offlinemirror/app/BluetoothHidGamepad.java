@@ -155,7 +155,7 @@ public final class BluetoothHidGamepad {
 
             hidDevice = (BluetoothHidDevice) proxy;
             byte compositeSubclass = (byte) (
-                    BluetoothHidDevice.SUBCLASS1_COMBO
+                    BluetoothHidDevice.SUBCLASS1_MOUSE
                             | BluetoothHidDevice.SUBCLASS2_GAMEPAD);
             BluetoothHidDeviceAppSdpSettings sdp =
                     new BluetoothHidDeviceAppSdpSettings(
