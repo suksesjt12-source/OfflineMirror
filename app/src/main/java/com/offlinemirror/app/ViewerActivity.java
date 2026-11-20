@@ -851,6 +851,16 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         try {
             decoder.configure(format, surface, null, 0);
             decoder.start();
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.os.Bundle lowLatency = new android.os.Bundle();
+                lowLatency.putInt(MediaCodec.PARAMETER_KEY_LOW_LATENCY, 1);
+                try {
+                    decoder.setParameters(lowLatency);
+                    android.util.Log.i("OfflineMirror", "Enabled decoder low-latency mode");
+                } catch (Exception unsupported) {
+                    android.util.Log.w("OfflineMirror", "Decoder low-latency mode unavailable", unsupported);
+                }
+            }
             android.util.Log.i("OfflineMirror", "Using decoder " + decoder.getName()
                     + " for " + config.width + "x" + config.height);
             return decoder;
