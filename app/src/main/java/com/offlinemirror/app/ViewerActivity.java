@@ -35,7 +35,6 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private SurfaceView surfaceView;
     private TextView status;
     private String host;
-    private String sessionKey;
     private boolean audioEnabled;
     private int videoPort = VIDEO_PORT;
     private int audioPort = AUDIO_PORT;
@@ -65,7 +64,6 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         host = getIntent().getStringExtra("host");
-        sessionKey = getIntent().getStringExtra("sessionKey");
         audioEnabled = getIntent().getBooleanExtra("audioEnabled", false);
         videoPort = getIntent().getIntExtra("videoPort", VIDEO_PORT);
         audioPort = getIntent().getIntExtra("audioPort", AUDIO_PORT);
@@ -137,13 +135,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             videoSocket.setTcpNoDelay(true);
             videoSocket.connect(new InetSocketAddress(host, videoPort), 10_000);
 
-            DataOutputStream authOutput = new DataOutputStream(
-                    new BufferedOutputStream(videoSocket.getOutputStream()));
-            authOutput.writeUTF(sessionKey);
-            authOutput.flush();
             input = new DataInputStream(
                     new BufferedInputStream(videoSocket.getInputStream(), 256 * 1024));
-            if (!input.readBoolean()) throw new SecurityException("Pairing key rejected by Host");
 
             StreamConfig config = readStreamHeader(input);
             decoder = createDecoder(config, surface);
@@ -221,11 +214,6 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             controlSocket.connect(new InetSocketAddress(host, controlPort), 8_000);
             DataOutputStream output = new DataOutputStream(
                     new BufferedOutputStream(controlSocket.getOutputStream()));
-            DataInputStream input = new DataInputStream(
-                    new BufferedInputStream(controlSocket.getInputStream()));
-            output.writeUTF(sessionKey);
-            output.flush();
-            if (!input.readBoolean()) throw new SecurityException("Remote touch pairing rejected");
             controlOutput = output;
             controlStatus = "Touch: ready";
         } catch (Exception error) {
@@ -302,13 +290,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             audioSocket.setTcpNoDelay(true);
             audioSocket.connect(new InetSocketAddress(host, audioPort), 12_000);
 
-            DataOutputStream authOutput = new DataOutputStream(
-                    new BufferedOutputStream(audioSocket.getOutputStream()));
-            authOutput.writeUTF(sessionKey);
-            authOutput.flush();
-
             input = new DataInputStream(new BufferedInputStream(audioSocket.getInputStream(), 32 * 1024));
-            if (!input.readBoolean()) throw new SecurityException("Audio pairing key rejected");
 
             int sampleRate = input.readInt();
             int channels = input.readInt();
@@ -420,7 +402,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         runOnUiThread(() -> {
             if (status != null) {
                 status.setText("HP ini (Viewer): " + viewerAddress
-                        + "   |   IP Host: " + host + "\\n"
+                        + "   |   IP Host: " + host + "\n"
                         + videoStatus + "  •  " + controlStatus + "  •  " + audioStatus);
             }
         });

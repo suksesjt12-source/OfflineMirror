@@ -43,7 +43,6 @@ public class MirrorHostService extends Service {
     private static final int MAGIC = 0x4F4D4952;
 
     private volatile boolean running = false;
-    private volatile String sessionKey = "";
     private boolean audioEnabled = false;
 
     private ServerSocket videoServerSocket;
@@ -77,9 +76,8 @@ public class MirrorHostService extends Service {
 
         int resultCode = intent.getIntExtra("resultCode", 0);
         Intent projectionData = getProjectionData(intent);
-        sessionKey = intent.getStringExtra("sessionKey");
         audioEnabled = intent.getBooleanExtra("audioEnabled", false);
-        if (projectionData == null || resultCode == 0 || sessionKey == null || sessionKey.length() < 16) {
+        if (projectionData == null || resultCode == 0) {
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -111,7 +109,7 @@ public class MirrorHostService extends Service {
             projection.registerCallback(projectionCallback, new Handler(getMainLooper()));
             running = true;
 
-            // Bind listening ports before the Host displays its pairing QR.
+            // Prepare the local listening ports before the Viewer connects.
             videoServerSocket = openServerSocket(VIDEO_PORT);
             controlServerSocket = openServerSocket(CONTROL_PORT);
             if (audioEnabled && Build.VERSION.SDK_INT >= 29) {
@@ -158,9 +156,6 @@ public class MirrorHostService extends Service {
             videoClientSocket.setTcpNoDelay(true);
             output = new DataOutputStream(new BufferedOutputStream(
                     videoClientSocket.getOutputStream(), 256 * 1024));
-
-            DataInputStream authInput = authenticate(videoClientSocket, output);
-            if (authInput == null) throw new SecurityException("Viewer pairing key rejected");
 
             session = createInitialSession(maxDimension, fps, bitrate);
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
@@ -228,9 +223,6 @@ public class MirrorHostService extends Service {
             output = new DataOutputStream(new BufferedOutputStream(
                     audioClientSocket.getOutputStream(), 32 * 1024));
 
-            DataInputStream authInput = authenticate(audioClientSocket, output);
-            if (authInput == null) throw new SecurityException("Audio pairing key rejected");
-
             final int sampleRate = 44100;
             final int channelMask = AudioFormat.CHANNEL_IN_STEREO;
             int minBytes = AudioRecord.getMinBufferSize(
@@ -288,10 +280,8 @@ public class MirrorHostService extends Service {
             controlClientSocket = controlServerSocket.accept();
             controlClientSocket.setTcpNoDelay(true);
 
-            DataOutputStream authOutput = new DataOutputStream(
-                    new BufferedOutputStream(controlClientSocket.getOutputStream()));
-            DataInputStream input = authenticate(controlClientSocket, authOutput);
-            if (input == null) throw new SecurityException("Control pairing key rejected");
+            DataInputStream input = new DataInputStream(
+                    new BufferedInputStream(controlClientSocket.getInputStream()));
 
             while (running && !controlClientSocket.isClosed()) {
                 int type = input.readUnsignedByte();
@@ -325,15 +315,6 @@ public class MirrorHostService extends Service {
         server.setReuseAddress(true);
         server.bind(new InetSocketAddress(port), 1);
         return server;
-    }
-
-    private DataInputStream authenticate(Socket socket, DataOutputStream output) throws Exception {
-        DataInputStream input = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
-        String suppliedKey = input.readUTF();
-        boolean accepted = sessionKey != null && sessionKey.equals(suppliedKey);
-        output.writeBoolean(accepted);
-        output.flush();
-        return accepted ? input : null;
     }
 
     private EncoderSession createInitialSession(int maxDimension, int fps, int bitrate)
