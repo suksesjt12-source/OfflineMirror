@@ -157,6 +157,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
             MediaCodec.BufferInfo outputInfo = new MediaCodec.BufferInfo();
             boolean firstFrameRendered = false;
+            long receivedPackets = 0;
+            long receivedBytes = 0;
             while (running) {
                 int size = input.readInt();
 
@@ -178,6 +180,13 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 }
                 byte[] packet = new byte[size];
                 input.readFully(packet);
+                receivedPackets++;
+                receivedBytes += size;
+
+                if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+                        && (config.csd0.length > 0 || config.csd1.length > 0)) {
+                    continue;
+                }
 
                 int inputIndex;
                 do {
@@ -199,13 +208,19 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
                 int outputIndex = decoder.dequeueOutputBuffer(outputInfo, 10_000);
                 while (outputIndex >= 0 && running) {
-                    decoder.releaseOutputBuffer(outputIndex, true);
-                    if (!firstFrameRendered) {
+                    boolean renderFrame = outputInfo.size > 0;
+                    decoder.releaseOutputBuffer(outputIndex, renderFrame);
+                    if (renderFrame && !firstFrameRendered) {
                         firstFrameRendered = true;
                         videoStatus = "Mirroring aktif • " + config.width + " × " + config.height;
                         updateStatus();
                     }
                     outputIndex = decoder.dequeueOutputBuffer(outputInfo, 0);
+                }
+                if (receivedPackets == 1 || receivedPackets % 90 == 0) {
+                    android.util.Log.i("OfflineMirror", "Viewer video packets=" + receivedPackets
+                            + " bytes=" + receivedBytes + " resolution="
+                            + config.width + "x" + config.height);
                 }
             }
         } catch (Exception error) {
@@ -400,13 +415,22 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 MediaFormat.MIMETYPE_VIDEO_AVC, config.width, config.height);
         if (config.csd0.length > 0) format.setByteBuffer("csd-0", ByteBuffer.wrap(config.csd0));
         if (config.csd1.length > 0) format.setByteBuffer("csd-1", ByteBuffer.wrap(config.csd1));
-        MediaCodec decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
         if (surface == null || !surface.isValid()) {
             throw new IllegalStateException("Layar Viewer belum siap");
         }
-        decoder.configure(format, surface, null, 0);
-        decoder.start();
-        return decoder;
+        MediaCodec decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+        try {
+            decoder.configure(format, surface, null, 0);
+            decoder.start();
+            android.util.Log.i("OfflineMirror", "AVC decoder ready: "
+                    + config.width + "x" + config.height
+                    + " csd0=" + config.csd0.length + " csd1=" + config.csd1.length);
+            return decoder;
+        } catch (Exception error) {
+            try { decoder.release(); } catch (Exception ignored) {}
+            throw new IllegalStateException("Decoder H.264 gagal untuk "
+                    + config.width + "x" + config.height + ": " + error.getMessage(), error);
+        }
     }
 
     private MediaCodec releaseDecoder(MediaCodec decoder) {

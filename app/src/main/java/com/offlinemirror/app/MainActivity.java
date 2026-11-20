@@ -39,14 +39,12 @@ import com.google.zxing.EncodeHintType;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
-import com.journeyapps.barcodescanner.CaptureActivity;
-import com.google.zxing.integration.android.IntentIntegrator;
-import com.google.zxing.integration.android.IntentResult;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_CAPTURE = 4101;
     private static final int REQUEST_AUDIO = 4102;
     private static final int REQUEST_CAMERA = 4103;
+    private static final int REQUEST_QR = 4104;
     private static final int VIDEO_PORT = 48888;
     private static final int AUDIO_PORT = 48889;
     private static final int CONTROL_PORT = 48890;
@@ -277,17 +275,11 @@ public class MainActivity extends Activity {
 
     private void launchQrScanner() {
         try {
-            IntentIntegrator scanner = new IntentIntegrator(this);
-            scanner.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE);
-            scanner.setPrompt("Arahkan kamera ke QR OfflineMirror dari HP Host");
-            scanner.setBeepEnabled(false);
-            scanner.setOrientationLocked(false);
-            scanner.setCaptureActivity(CaptureActivity.class);
-            scanner.initiateScan();
+            startActivityForResult(new Intent(this, QrScannerActivity.class), REQUEST_QR);
         } catch (Exception error) {
             Toast.makeText(this, "Pemindai QR tidak dapat dibuka: " + error.getMessage(),
                     Toast.LENGTH_LONG).show();
-            android.util.Log.e("OfflineMirror", "Could not open QR scanner", error);
+            android.util.Log.e("OfflineMirror", "Could not launch internal QR scanner", error);
         }
     }
 
@@ -518,11 +510,12 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
-        IntentResult scanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
-        if (scanResult != null) {
-            String contents = scanResult.getContents();
-            if (contents == null) {
-                Toast.makeText(this, "Pemindaian QR dibatalkan.", Toast.LENGTH_SHORT).show();
+        if (requestCode == REQUEST_QR) {
+            String contents = resultCode == RESULT_OK && data != null
+                    ? data.getStringExtra("qr_result") : null;
+            if (contents == null || contents.trim().isEmpty()) {
+                Toast.makeText(this, "Pemindaian QR dibatalkan atau tidak menemukan kode.",
+                        Toast.LENGTH_SHORT).show();
             } else if (applyHostQr(contents)) {
                 Toast.makeText(this, "QR Host berhasil dibaca. Menghubungkan...", Toast.LENGTH_SHORT).show();
                 connectToHost();
