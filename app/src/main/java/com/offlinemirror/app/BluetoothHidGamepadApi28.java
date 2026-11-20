@@ -321,7 +321,7 @@ public final class BluetoothHidGamepadApi28
     /**
      * Send the newest HID state as soon as the report worker can process it.
      * Multiple touch updates arriving before the worker runs are coalesced into
-     * one report, avoiding a stale FIFO queue while adding no fixed 16 ms delay.
+     * one report, and the report task is placed at the front of its worker queue.
      * Bluetooth Binder calls stay off the UI thread and use display-thread priority.
      */
     private boolean sendLastReport() {
@@ -334,7 +334,7 @@ public final class BluetoothHidGamepadApi28
             reportPending = true;
         }
 
-        boolean posted = handler.postDelayed(() -> {
+        boolean posted = handler.postAtFrontOfQueue(() -> {
             synchronized (reportLock) {
                 reportPending = false;
             }
@@ -356,7 +356,7 @@ public final class BluetoothHidGamepadApi28
                 lastSentReport = null;
                 postStatus("Izin Bluetooth dicabut. Aktifkan ulang izin Bluetooth.");
             }
-        }, 0);
+        });
 
         if (!posted) {
             synchronized (reportLock) {
