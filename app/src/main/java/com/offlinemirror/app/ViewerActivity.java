@@ -50,6 +50,10 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private volatile DataOutputStream controlOutput;
     private Thread receiveThread;
     private Thread audioThread;
+    private final Object receiverLock = new Object();
+    private Surface pendingSurface;
+    private boolean restartWorkerRunning = false;
+    private boolean activityDestroyed = false;
 
     private float touchDownX;
     private float touchDownY;
@@ -118,6 +122,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        // The drawing code uses the current Canvas dimensions on every frame.
     }
 
     @Override
@@ -126,10 +131,55 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     }
 
     private void startReceiving(Surface surface) {
-        if (receiveThread != null && receiveThread.isAlive()) return;
+        if (surface == null || !surface.isValid()) return;
+        synchronized (receiverLock) {
+            if (activityDestroyed) return;
+            pendingSurface = surface;
+
+            // A restart worker waits for the old receiver and then uses the newest Surface.
+            if (restartWorkerRunning) return;
+
+            if (receiveThread == null || !receiveThread.isAlive()) {
+                launchReceiverLocked(surface);
+                return;
+            }
+
+            videoStatus = "Orientasi layar berubah. Menyambungkan ulang video...";
+            updateStatus();
+            stopReceiverLocked();
+
+            restartWorkerRunning = true;
+            Thread previousReceiver = receiveThread;
+            Thread restartWorker = new Thread(() -> {
+                try {
+                    previousReceiver.join();
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                }
+
+                synchronized (receiverLock) {
+                    restartWorkerRunning = false;
+                    Surface latestSurface = pendingSurface;
+                    if (!activityDestroyed && latestSurface != null && latestSurface.isValid()
+                            && !previousReceiver.isAlive()) {
+                        launchReceiverLocked(latestSurface);
+                    }
+                }
+            }, "OfflineMirror-Viewer-Restart");
+            restartWorker.start();
+        }
+    }
+
+    private void launchReceiverLocked(Surface surface) {
         running = true;
         receiveThread = new Thread(() -> receiveLoop(surface), "OfflineMirror-Viewer");
         receiveThread.start();
+    }
+
+    private void stopReceiverLocked() {
+        running = false;
+        try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
+        closeAuxiliaryConnections();
     }
 
     private void receiveLoop(Surface surface) {
@@ -419,9 +469,10 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     }
 
     private void stopReceiving() {
-        running = false;
-        try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
-        closeAuxiliaryConnections();
+        synchronized (receiverLock) {
+            pendingSurface = null;
+            stopReceiverLocked();
+        }
     }
 
     @Override
@@ -432,7 +483,11 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
     @Override
     protected void onDestroy() {
-        stopReceiving();
+        synchronized (receiverLock) {
+            activityDestroyed = true;
+            pendingSurface = null;
+            stopReceiverLocked();
+        }
         super.onDestroy();
     }
 
