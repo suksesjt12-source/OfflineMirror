@@ -52,7 +52,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private TextView gamepadStatus;
     private Button gamepadButton;
     private GamepadOverlayView gamepadOverlay;
-    private BluetoothHidGamepadApi28 bluetoothGamepad;
+    private GamepadController bluetoothGamepad;
     private String host;
     private String sessionKey = "";
     private boolean audioEnabled;
@@ -220,15 +220,30 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
     private void startBluetoothGamepadController() {
         if (bluetoothGamepad == null) {
-            bluetoothGamepad = new BluetoothHidGamepadApi28(this, message -> {
-                if (gamepadStatus != null) gamepadStatus.setText(message);
-                if (gamepadButton != null) {
-                    gamepadButton.setText(message.contains("TERHUBUNG")
-                            ? "GAMEPAD CONNECTED" : "PILIH HP HOST");
-                }
-            });
+            try {
+                GamepadController.Listener listener = this::updateGamepadStatus;
+                Class<?> implementation = Class.forName(
+                        "com.offlinemirror.app.BluetoothHidGamepadApi28");
+                bluetoothGamepad = (GamepadController) implementation
+                        .getConstructor(Activity.class, GamepadController.Listener.class)
+                        .newInstance(this, listener);
+            } catch (Exception error) {
+                gamepadStatus.setText("Mode Gamepad Bluetooth tidak tersedia: "
+                        + error.getClass().getSimpleName());
+                return;
+            }
         }
         bluetoothGamepad.start();
+    }
+
+    private void updateGamepadStatus(String message) {
+        runOnUiThread(() -> {
+            if (gamepadStatus != null) gamepadStatus.setText(message);
+            if (gamepadButton != null) {
+                gamepadButton.setText(message.contains("TERHUBUNG")
+                        ? "GAMEPAD CONNECTED" : "PILIH HP HOST");
+            }
+        });
     }
 
     private void showPairedHostDevices() {
@@ -294,7 +309,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             } else if (gamepadStatus != null) {
                 gamepadStatus.setText("Bluetooth tidak diaktifkan.");
             }
-        } else if (requestCode == BluetoothHidGamepadApi28.REQUEST_DISCOVERABLE) {
+        } else if (requestCode == GamepadController.REQUEST_DISCOVERABLE) {
             if (resultCode > 0 && gamepadStatus != null) {
                 gamepadStatus.setText("HP Viewer terlihat. Pasangkan 'OfflineMirror Gamepad' dari HP Host.");
             } else if (gamepadStatus != null) {
