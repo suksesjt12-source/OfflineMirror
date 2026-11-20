@@ -164,7 +164,7 @@ public class RemoteAccessibilityService extends AccessibilityService {
             final boolean submittedKeep=keep;
             final int submittedTaps=sentTaps;
             boolean accepted=service.dispatchGesture(builder.build(),
-                    new GestureDescription.GestureResultCallback() {
+                    new AccessibilityService.GestureResultCallback() {
                 @Override public void onCompleted(GestureDescription description) {
                     inFlight=false; pendingTaps &= ~submittedTaps;
                     if(submittedKeep&&submitted!=null) {
