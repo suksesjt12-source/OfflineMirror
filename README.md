@@ -1,6 +1,6 @@
-# OfflineMirror 1.31.0
+# OfflineMirror 1.34.0
 
-OfflineMirror streams an Android screen to another Android phone over the same private Wi-Fi or hotspot. Internet access and Bluetooth are not required.
+OfflineMirror streams an Android screen to another Android phone over the same private Wi-Fi or hotspot. Internet access is not required.
 
 ## Setup
 
@@ -9,41 +9,31 @@ OfflineMirror streams an Android screen to another Android phone over the same p
 3. On the phone whose screen will be shared, tap **START SCREEN SHARING** and approve screen capture.
 4. On the Host, tap **SHOW PAIRING QR**.
 5. On the other phone, scan the QR and connect as Viewer.
-6. For remote touch and Wi-Fi gamepad, enable **OfflineMirror Remote Control** in Android Accessibility settings on the Host.
+6. Enable Bluetooth on both phones. In Viewer, tap **PAIR BT**. If not already paired, leave Viewer open and pair **OfflineMirror Gamepad + Mouse** from the Host Bluetooth settings.
 
-## Wi-Fi gamepad (version 1.31.0)
+## Bluetooth HID gamepad + mouse (version 1.34.0)
 
-- The Viewer sends analog and button state through the existing local TCP control channel, authenticated with the Host's session pairing key.
-- No Bluetooth pairing, Bluetooth permissions, extra port, or internet connection is required.
-- The Host Accessibility service translates the virtual gamepad to touch gestures at the default on-screen control positions.
-- This is touch emulation, not a system-wide HID gamepad. Games that require a physical controller, block Accessibility gestures, or use a different touch layout may not respond as expected.
-- The default mapping follows the virtual overlay: left analog near the lower-left, action buttons on the right, and shoulder buttons near the upper edge.
+- Gamepad and mouse reports are transmitted over Bluetooth HID. Wi-Fi does not carry gamepad, mouse, tap, hold, or swipe input.
+- The composite HID descriptor exposes a standard Game Pad collection and a separate relative Mouse collection.
+- Standard button usages, D-pad hat, left X/Y axes, right Z/Rz axes and analog L/R trigger usages improve Android game-controller recognition.
+- Viewer includes a virtual gamepad with two independent sticks, D-pad, face buttons, shoulder buttons, Start/Select and triggers.
+- Optional mouse pad: tap **MOUSE** in Viewer. Drag in the pad area to move the Bluetooth pointer; use LEFT and RIGHT zones for clicks. It remains available alongside the virtual gamepad.
+- Android 9+ and a vendor Bluetooth stack exposing the HID Device profile are required. Keep Viewer open in the foreground while pairing and playing.
+
+## Automatic mapping and compatibility
+
+Android-compatible HID usage IDs and axis layout are used so supported games and emulators can detect the controller through Android's system input stack. Individual games and emulators may still provide their own mapping screen or ignore a controller profile; a universal forced mapping cannot be guaranteed.
 
 ## Network channels
 
 - Video: TCP port 48888 (H.264)
 - Audio: TCP port 48889 (optional; Android 10+ and capture-compatible apps)
-- Remote touch and gamepad: TCP port 48890
-- QR pairing includes the Host's local IP, video port, and session pairing key. The control socket validates the same key.
-- These channels are intended for a trusted local network. Pair only with devices you trust.
+- Utility commands: TCP port 48890 (authenticated clipboard, volume, media and ping only)
+- Input is Bluetooth HID only. The Wi-Fi utility channel rejects legacy touch and gamepad packets.
 
 ## Compatibility notes
 
 - Screen sharing: Android 5.0+
-- Remote touch and Wi-Fi gamepad gestures: Android 7.0+
-- Persistent analog touch continuation: Android 8.0+
+- Bluetooth HID gamepad + mouse: Android 9+ and vendor HID Device support
 - Audio playback capture: Android 10+ and only apps that permit capture
-- Android vendors and individual games can restrict screen capture or Accessibility gestures.
-
-Screen-Off Mirroring uses a partial CPU wake lock while the Host display is off, but Android may still stop MediaProjection on some devices. The feature does not guarantee that every device keeps capturing after its screen is turned off.
-
-
-## Bluetooth dual-stick gamepad and remote touch (v1.33.0)
-
-- Virtual gamepad reports are sent through **Bluetooth HID only**. Wi-Fi no longer accepts gamepad-state packets.
-- The HID report includes a D-pad, 14 buttons, and four analog axes (left stick X/Y and right stick X/Y).
-- A dedicated display-priority report worker coalesces stale stick updates and sends button transitions immediately to reduce input queueing.
-- The Viewer overlay supports simultaneous multi-touch: use both sticks/buttons while tapping, holding, or swiping other areas of the mirrored screen.
-- Direct screen touch gestures, clipboard, volume and media commands continue over the authenticated Wi-Fi control channel.
-- Bluetooth HID Device is available only on Android 9+ devices whose vendor Bluetooth stack exposes the HID Device profile. Pair the Viewer and Host in Android Bluetooth settings before connecting from the Viewer.
-- Touch gesture control on the Host still requires enabling OfflineMirror Remote Touch in Android Accessibility settings.
+- Device firmware and individual games/emulators may restrict screen capture or controller support.
