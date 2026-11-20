@@ -629,10 +629,12 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         try {
             videoSocket = new Socket();
             videoSocket.setTcpNoDelay(true);
+            // Small socket receive window limits stale-frame queueing on Wi-Fi/hotspot.
+            videoSocket.setReceiveBufferSize(64 * 1024);
             videoSocket.connect(new InetSocketAddress(host, videoPort), 10_000);
             authenticateSocket(videoSocket);
             input = new DataInputStream(
-                    new BufferedInputStream(videoSocket.getInputStream(), 256 * 1024));
+                    new BufferedInputStream(videoSocket.getInputStream(), 8 * 1024));
 
             StreamConfig config = readStreamHeader(input);
             setStreamDimensions(config);
@@ -675,9 +677,9 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                     continue;
                 }
 
-                int inputIndex = decoder.dequeueInputBuffer(10_000);
+                int inputIndex = decoder.dequeueInputBuffer(1_000);
                 while (running && inputIndex < 0) {
-                    inputIndex = decoder.dequeueInputBuffer(10_000);
+                    inputIndex = decoder.dequeueInputBuffer(1_000);
                 }
                 if (!running || inputIndex < 0) break;
 
@@ -692,7 +694,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
                 // Drain every decoded output. Surface decoders must be given every
                 // output buffer for rendering; do not gate render=true on BufferInfo.size.
-                int outputIndex = decoder.dequeueOutputBuffer(outputInfo, 10_000);
+                int outputIndex = decoder.dequeueOutputBuffer(outputInfo, 1_000);
                 while (outputIndex >= 0 && running) {
                     decoder.releaseOutputBuffer(outputIndex, true);
                     decodedFrames++;
