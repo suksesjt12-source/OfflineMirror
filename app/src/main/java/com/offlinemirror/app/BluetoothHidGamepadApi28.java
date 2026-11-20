@@ -28,7 +28,8 @@ public final class BluetoothHidGamepadApi28
         implements GamepadController, BluetoothProfile.ServiceListener {
     private static final int REPORT_ID = 1;
 
-    // 16 buttons plus four signed 8-bit axes (X, Y, Rx, Ry).
+    // Ten standard buttons, a four-bit HID hat switch, and four signed 8-bit axes.
+    // D-pad directions are encoded as a hat switch so Android maps them as DPAD keys.
     private static final byte[] REPORT_DESCRIPTOR = new byte[] {
             0x05, 0x01,             // Usage Page (Generic Desktop)
             0x09, 0x05,             // Usage (Game Pad)
@@ -36,12 +37,28 @@ public final class BluetoothHidGamepadApi28
             (byte) 0x85, 0x01,      //   Report ID (1)
             0x05, 0x09,             //   Usage Page (Button)
             0x19, 0x01,             //   Usage Minimum (Button 1)
-            0x29, 0x10,             //   Usage Maximum (Button 16)
+            0x29, 0x0A,             //   Usage Maximum (Button 10)
             0x15, 0x00,             //   Logical Minimum (0)
             0x25, 0x01,             //   Logical Maximum (1)
-            (byte) 0x95, 0x10,      //   Report Count (16)
             0x75, 0x01,             //   Report Size (1)
+            (byte) 0x95, 0x0A,      //   Report Count (10)
             (byte) 0x81, 0x02,      //   Input (Data, Variable, Absolute)
+            0x75, 0x06,             //   Report Size (6)
+            (byte) 0x95, 0x01,      //   Report Count (1)
+            (byte) 0x81, 0x03,      //   Input (Constant padding)
+            0x05, 0x01,             //   Usage Page (Generic Desktop)
+            0x09, 0x39,             //   Usage (Hat Switch)
+            0x15, 0x00,             //   Logical Minimum (0)
+            0x25, 0x07,             //   Logical Maximum (7); 8 is null/centered
+            0x35, 0x00,             //   Physical Minimum (0)
+            0x46, 0x3B, 0x01,       //   Physical Maximum (315)
+            0x65, 0x14,             //   Unit (Degrees)
+            0x75, 0x04,             //   Report Size (4)
+            (byte) 0x95, 0x01,      //   Report Count (1)
+            (byte) 0x81, 0x42,      //   Input (Data, Variable, Absolute, Null State)
+            0x75, 0x04,             //   Report Size (4)
+            (byte) 0x95, 0x01,      //   Report Count (1)
+            (byte) 0x81, 0x03,      //   Input (Constant padding)
             0x05, 0x01,             //   Usage Page (Generic Desktop)
             0x09, 0x30,             //   Usage (X)
             0x09, 0x31,             //   Usage (Y)
@@ -66,7 +83,7 @@ public final class BluetoothHidGamepadApi28
     private volatile boolean registered;
     private volatile boolean started;
     private boolean discoverableRequested;
-    private volatile byte[] lastReport = new byte[] {0, 0, 0, 0, 0, 0};
+    private volatile byte[] lastReport = new byte[] {0, 0, 8, 0, 0, 0, 0};
     private volatile byte[] lastSentReport;
     private final Object reportLock = new Object();
     private boolean reportPending;
@@ -269,9 +286,29 @@ public final class BluetoothHidGamepadApi28
 
     @Override
     public boolean sendState(int buttons, float leftX, float leftY) {
+        // The first ten bits are standard HID buttons. D-pad bits are converted
+        // into an eight-way hat switch; centered hat value 8 is the null state.
+        int dpad = (buttons >>> 10) & 0x0F;
+        boolean up = (dpad & 0x01) != 0;
+        boolean down = (dpad & 0x02) != 0;
+        boolean left = (dpad & 0x04) != 0;
+        boolean right = (dpad & 0x08) != 0;
+        int hat = 8;
+        if (up && !down) {
+            hat = left && !right ? 7 : (right && !left ? 1 : 0);
+        } else if (down && !up) {
+            hat = left && !right ? 5 : (right && !left ? 3 : 4);
+        } else if (left && !right) {
+            hat = 6;
+        } else if (right && !left) {
+            hat = 2;
+        }
+
+        int standardButtons = buttons & 0x03FF;
         lastReport = new byte[] {
-                (byte) (buttons & 0xFF),
-                (byte) ((buttons >>> 8) & 0xFF),
+                (byte) (standardButtons & 0xFF),
+                (byte) ((standardButtons >>> 8) & 0x03),
+                (byte) (hat & 0x0F),
                 toAxis(leftX),
                 toAxis(leftY),
                 0,
@@ -328,7 +365,7 @@ public final class BluetoothHidGamepadApi28
     }
 
     private byte[] neutralReport() {
-        return new byte[] {0, 0, 0, 0, 0, 0};
+        return new byte[] {0, 0, 8, 0, 0, 0, 0};
     }
 
     private byte toAxis(float value) {
