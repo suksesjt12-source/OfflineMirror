@@ -17,6 +17,7 @@ import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.graphics.ImageFormat;
 import android.media.ImageReader;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -141,7 +142,10 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
 
     private void openCamera() {
         if (cameraDevice != null || isFinishing()) return;
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+        // Before Android 6, CAMERA permission is granted at install time.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && checkSelfPermission(Manifest.permission.CAMERA)
+                        != PackageManager.PERMISSION_GRANTED) {
             updateStatus("Izin kamera belum diberikan. Kembali lalu izinkan kamera.");
             return;
         }
