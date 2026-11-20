@@ -23,7 +23,6 @@ import android.provider.Settings;
 import android.content.pm.PackageManager;
 import android.Manifest;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
@@ -67,6 +66,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private Button bluetoothButton;
     private GamepadOverlayView gamepadOverlay;
     private BluetoothHidGamepad bluetoothGamepad;
+    private MouseOverlayView mouseOverlay;
     private volatile String bluetoothStatus =
             "Bluetooth HID belum tersambung • tekan PAIR BT";
     private boolean controlEnabled = true;
@@ -97,9 +97,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private volatile String videoStatus = "Menyiapkan koneksi...";
     private volatile String audioStatus = "Audio: nonaktif";
     private volatile String controlStatus = "Remote Control: menghubungkan";
-    private float touchDownX;
-    private float touchDownY;
-    private long touchDownTime;
 
     private int dp(float value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
@@ -140,14 +137,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52), Gravity.TOP);
         status.setBackgroundColor(0x99000000);
         root.addView(status, statusParams);
-
-        TextView touchHint = new TextView(this);
-        touchHint.setText("Dual-stick Bluetooth HID • sentuhan langsung dikirim melalui Wi-Fi");
-        touchHint.setTextColor(Color.rgb(190, 205, 229));
-        touchHint.setTextSize(11);
-        touchHint.setGravity(Gravity.CENTER);
-        touchHint.setPadding(dp(8), dp(4), dp(8), dp(4));
-        touchHint.setVisibility(View.GONE);
 
         LinearLayout gamepadBar = new LinearLayout(this);
         gamepadBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -196,21 +185,24 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 }
             }
 
-            @Override
-            public void onDirectGesture(int type, float x1, float y1,
-                                        float x2, float y2, int durationMs) {
-                sendRemoteGesture(type, x1, y1, x2, y2, durationMs);
-            }
         });
         videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        mouseOverlay = new MouseOverlayView(this);
+        mouseOverlay.setListener((dx, dy, buttons, wheel) -> {
+            if (bluetoothGamepad != null) bluetoothGamepad.sendMouse(dx, dy, buttons, wheel);
+        });
+        mouseOverlay.setVisibility(View.GONE);
+        FrameLayout.LayoutParams mouseParams = new FrameLayout.LayoutParams(
+                dp(280), dp(104), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        mouseParams.topMargin = dp(140);
+        videoFrame.addView(mouseOverlay, mouseParams);
         videoFrame.setClipChildren(true);
         videoFrame.setClipToPadding(true);
         root.addView(videoFrame, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Bluetooth HID is the only gamepad transport. Wi-Fi remains dedicated
-        // to screen mirroring, taps, holds, swipes, and utility commands.
+        // Gamepad and mouse input use Bluetooth HID; Wi-Fi carries video, audio and utilities.
         FrameLayout.LayoutParams gamepadBarParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(44), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         gamepadBarParams.topMargin = dp(48);
@@ -222,8 +214,9 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         toolsBar.setOrientation(LinearLayout.HORIZONTAL);
         toolsBar.setGravity(Gravity.CENTER);
         toolsBar.setBackgroundColor(0xBB111923);
-        String[] toolNames = {"SETTINGS", "BLUETOOTH", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
+        String[] toolNames = {"SETTINGS", "BLUETOOTH", "MOUSE", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
         Button settingsTool = null;
+        Button mouseTool = null;
         bluetoothButton = null;
         for (String toolName : toolNames) {
             Button tool = new Button(this);
@@ -237,6 +230,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             toolsBar.addView(tool, toolParams);
             if ("SETTINGS".equals(toolName)) settingsTool = tool;
             else if ("BLUETOOTH".equals(toolName)) bluetoothButton = tool;
+            else if ("MOUSE".equals(toolName)) mouseTool = tool;
             else if ("VOL -".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 1));
             else if ("VOL +".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 2));
             else if ("MEDIA".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 3));
@@ -244,6 +238,15 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         }
         if (settingsTool != null) settingsTool.setOnClickListener(v -> showGamepadSettings());
         if (bluetoothButton != null) bluetoothButton.setOnClickListener(v -> showBluetoothDevicePicker());
+        if (mouseTool != null) {
+            Button mouseToggle = mouseTool;
+            mouseToggle.setOnClickListener(v -> {
+                boolean visible = mouseOverlay.getVisibility() == View.VISIBLE;
+                mouseOverlay.setVisibility(visible ? View.GONE : View.VISIBLE);
+                mouseToggle.setText(visible ? "MOUSE" : "MOUSE: ON");
+                if (visible) mouseOverlay.releaseAllInputs();
+            });
+        }
         toolsScroll.addView(toolsBar);
         FrameLayout.LayoutParams toolsParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(40), Gravity.TOP);
@@ -345,17 +348,14 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                         throw new IllegalStateException("Versi protokol kontrol Host tidak cocok");
                     }
 
-                    boolean hostAccessibilityEnabled = input.readBoolean();
                     controlSocket = candidate;
                     controlOutput = output;
-                    controlStatus = hostAccessibilityEnabled
-                            ? "Touch Remote aktif • tap/swipe lewat Wi-Fi"
-                            : "Aktifkan Aksesibilitas pada HP Host untuk sentuhan";
+                    controlStatus = "Wi-Fi utilities connected";
                     updateStatus();
                     android.util.Log.i("OfflineMirror", "Remote Control channel authenticated");
                     startPingLoop(output, candidate);
 
-                    // The Host reports its Accessibility status after every gesture.
+                    // The utility socket carries only utility commands and ping.
                     while (controlLoopRunning && !candidate.isClosed()) {
                         int state = input.readUnsignedByte();
                         if (state == 2) {
@@ -371,8 +371,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                             throw new IllegalStateException("Status kontrol dari Host tidak valid");
                         }
                         controlStatus = state == 1
-                                ? "Touch Remote aktif • Wi-Fi"
-                                : "Aktifkan Aksesibilitas pada HP Host";
+                                ? "Wi-Fi utility command accepted"
+                                : "Wi-Fi utility command rejected";
                         updateStatus();
                     }
                 } catch (Exception error) {
@@ -615,72 +615,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         }
     }
 
-    private boolean handleRemoteTouch(View view, MotionEvent event) {
-        if (event.getAction() == MotionEvent.ACTION_DOWN) {
-            touchDownX = event.getX();
-            touchDownY = event.getY();
-            touchDownTime = event.getEventTime();
-            return true;
-        }
-
-        if (event.getAction() == MotionEvent.ACTION_UP) {
-            float width = Math.max(1f, view.getWidth());
-            float height = Math.max(1f, view.getHeight());
-            float x1 = clamp(touchDownX / width);
-            float y1 = clamp(touchDownY / height);
-            float x2 = clamp(event.getX() / width);
-            float y2 = clamp(event.getY() / height);
-            long duration = Math.max(1L, event.getEventTime() - touchDownTime);
-            float distance = (float) Math.hypot(
-                    event.getX() - touchDownX, event.getY() - touchDownY);
-
-            if (distance >= dp(20)) {
-                sendRemoteGesture(3, x1, y1, x2, y2, (int) duration);
-            } else if (duration >= 500) {
-                sendRemoteGesture(2, x1, y1, x1, y1, (int) duration);
-            } else {
-                sendRemoteGesture(1, x1, y1, x1, y1, 90);
-            }
-            return true;
-        }
-
-        // Continue consuming the complete touch sequence on the video surface.
-        return true;
-    }
-
-    private void sendRemoteGesture(int type, float x1, float y1,
-                                   float x2, float y2, int duration) {
-        DataOutputStream output = controlOutput;
-        if (output == null) {
-            controlStatus = "Touch Remote sedang menyambungkan ke Host";
-            updateStatus();
-            return;
-        }
-        try {
-            synchronized (output) {
-                output.writeByte(type);
-                output.writeFloat(x1);
-                output.writeFloat(y1);
-                if (type == 3) {
-                    output.writeFloat(x2);
-                    output.writeFloat(y2);
-                }
-                output.writeInt(Math.max(60, Math.min(1200, duration)));
-                output.flush();
-            }
-        } catch (Exception error) {
-            controlOutput = null;
-            controlStatus = "Wi-Fi kontrol terputus • menyambungkan ulang";
-            try { if (controlSocket != null) controlSocket.close(); } catch (Exception ignored) {}
-            updateStatus();
-            android.util.Log.w("OfflineMirror", "Could not send remote gesture", error);
-        }
-    }
-
-    private float clamp(float value) {
-        return Math.max(0f, Math.min(1f, value));
-    }
-
     /**
      * TextureView lets the decoded image be transformed independently of the
      * View bounds. Map the full texture to a centered, aspect-correct crop:
@@ -710,15 +644,11 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
         if (streamWidth < 2 || streamHeight < 2) {
             textureView.setTransform(new Matrix());
-            if (gamepadOverlay != null) {
-                gamepadOverlay.setVideoTransform(0f, 0f, viewWidth, viewHeight, 0);
-            }
             return;
         }
 
         // Host orientation is applied to this Activity when each stream header
         // arrives. Keep decoded pixels upright; only scale/crop to the Viewer bounds.
-        final int rotation = 0;
         float displaySourceWidth = streamWidth;
         float displaySourceHeight = streamHeight;
         float scale = Math.max(
@@ -751,10 +681,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             textureView.setTransform(transform);
         }
 
-        if (gamepadOverlay != null) {
-            gamepadOverlay.setVideoTransform(
-                    left, top, targetWidth, targetHeight, rotation);
-        }
     }
 
     private void receiveLoop(Surface surface) {
@@ -1045,9 +971,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                         + videoStatus + pingText + "  •  " + audioStatus + "  •  " + controlStatus);
                 if (gamepadStatus != null) {
                     gamepadStatus.setText(bluetoothStatus
-                            + " • Touch: tap/swipe gambar via Wi-Fi"
-                            + (controlStatus.contains("aktif")
-                                ? " • siap" : " • aktifkan Aksesibilitas Host"));
+                            + " • Bluetooth HID gamepad + mouse");
                 }
             }
         });
@@ -1057,8 +981,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         running = false;
         try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
         try { if (audioSocket != null) audioSocket.close(); } catch (Exception ignored) {}
-        // Remote Control is a separate channel; do not tear it down when the
-        // video Surface is recreated.
+        // Utility socket stays separate from the video stream.
     }
 
     @Override
@@ -1073,6 +996,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         Thread pinger = pingThread;
         if (pinger != null) pinger.interrupt();
         if (gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
+        if (mouseOverlay != null) mouseOverlay.releaseAllInputs();
         if (bluetoothGamepad != null) bluetoothGamepad.stop();
         stopReceiving();
         controlOutput = null;
