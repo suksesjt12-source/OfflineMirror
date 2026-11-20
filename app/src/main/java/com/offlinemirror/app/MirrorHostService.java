@@ -188,6 +188,10 @@ public class MirrorHostService extends Service {
                     android.util.Log.i("OfflineMirror", "AVC output format: "
                             + session.width + "x" + session.height + " csd0="
                             + csd0.length + " csd1=" + csd1.length);
+                    if (csd0.length == 0 && csd1.length == 0) {
+                        throw new IllegalStateException(
+                                "Encoder H.264 tidak memberikan SPS/PPS (codec config kosong)");
+                    }
                     if (streamHeaderSent) output.writeInt(-1);
                     writeStreamHeader(output, session.width, session.height, csd0, csd1);
                     streamHeaderSent = true;
@@ -381,9 +385,13 @@ public class MirrorHostService extends Service {
         Surface surface = null;
         VirtualDisplay virtualDisplay = null;
         try {
-            // Match the original working H.264 path: create the VirtualDisplay
-            // while the configured encoder input surface is ready, then start it.
+            // Important for affected OEM devices: start the encoder before connecting
+            // VirtualDisplay to its input Surface. This is the startup order that fixed
+            // black H.264 output in the earlier working build.
             surface = encoder.createInputSurface();
+            encoder.start();
+            requestSyncFrame(encoder);
+
             virtualDisplay = projection.createVirtualDisplay(
                     "OfflineMirror", size[0], size[1], metrics.densityDpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
@@ -391,9 +399,10 @@ public class MirrorHostService extends Service {
             if (virtualDisplay == null) {
                 throw new IllegalStateException("Unable to create virtual display");
             }
-            encoder.start();
-            requestSyncFrame(encoder);
 
+            // Ask for a fresh IDR after the projection display begins feeding the encoder.
+            requestSyncFrame(encoder);
+            android.util.Log.i("OfflineMirror", "VirtualDisplay attached to running AVC encoder");
             return new EncoderSession(encoder, virtualDisplay, surface,
                     size[0], size[1], display.getRotation());
         } catch (Exception error) {
