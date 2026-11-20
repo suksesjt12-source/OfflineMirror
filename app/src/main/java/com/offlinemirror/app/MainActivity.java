@@ -14,6 +14,7 @@ import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -46,6 +47,7 @@ public class MainActivity extends Activity {
     private static final int REQUEST_QR = 4104;
     private static final int VIDEO_PORT = 48888;
     private static final int AUDIO_PORT = 48889;
+    private static final int CONTROL_PORT = 48890;
 
     private Spinner resolutionSpinner;
     private Spinner fpsSpinner;
@@ -180,6 +182,26 @@ public class MainActivity extends Activity {
         showQrParams.topMargin = dp(8);
         page.addView(showQrButton, showQrParams);
         showQrButton.setOnClickListener(v -> showHostQr());
+
+        Button remoteControlButton = makeButton(
+                "ENABLE REMOTE CONTROL ON THIS HOST", Color.rgb(91, 72, 132));
+        LinearLayout.LayoutParams remoteParams = matchWrap();
+        remoteParams.topMargin = dp(8);
+        page.addView(remoteControlButton, remoteParams);
+        remoteControlButton.setOnClickListener(v -> {
+            new AlertDialog.Builder(this)
+                    .setTitle("Aktifkan Remote Control pada HP Host")
+                    .setMessage("Aktifkan layanan ini hanya pada HP yang menjadi Host. Setelah aktif, sentuhan pada layar Viewer dapat mengirim tap, tekan lama, dan swipe ke HP Host. Layanan hanya mengirim gesture dan tidak membaca isi layar. Android 13/14 mungkin meminta izin setelan terbatas untuk aplikasi yang dipasang dari APK.")
+                    .setNegativeButton("Nanti", null)
+                    .setNeutralButton("Info Aplikasi", (dialog, which) -> {
+                        Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:" + getPackageName()));
+                        startActivity(details);
+                    })
+                    .setPositiveButton("Buka Aksesibilitas", (dialog, which) ->
+                            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
+                    .show();
+        });
 
         Button stopButton = makeButton("STOP SHARING", Color.rgb(151, 54, 66));
         LinearLayout.LayoutParams stopParams = matchWrap();
@@ -400,6 +422,7 @@ public class MainActivity extends Activity {
         viewer.putExtra("audioEnabled", viewerAudioCheck != null && viewerAudioCheck.isChecked());
         viewer.putExtra("videoPort", VIDEO_PORT);
         viewer.putExtra("audioPort", AUDIO_PORT);
+        viewer.putExtra("controlPort", CONTROL_PORT);
         startActivity(viewer);
     }
 
