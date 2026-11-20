@@ -40,8 +40,8 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import com.journeyapps.barcodescanner.CaptureActivity;
-import com.journeyapps.zxing.integration.android.IntentIntegrator;
-import com.journeyapps.zxing.integration.android.IntentResult;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_CAPTURE = 4101;
