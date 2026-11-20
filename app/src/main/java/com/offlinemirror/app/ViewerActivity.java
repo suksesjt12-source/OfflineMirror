@@ -147,7 +147,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         gamepadOverlay.setListener(new GamepadOverlayView.Listener() {
             @Override
             public void onGamepadState(int buttons, float leftX, float leftY) {
-                BluetoothHidGamepadApi28 controller = bluetoothGamepad;
+                GamepadController controller = bluetoothGamepad;
                 if (controller != null && controller.isConnected()) {
                     controller.sendState(buttons, leftX, leftY);
                 }
