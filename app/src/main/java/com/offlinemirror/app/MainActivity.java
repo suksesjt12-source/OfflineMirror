@@ -14,7 +14,6 @@ import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.net.Uri;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -47,7 +46,6 @@ public class MainActivity extends Activity {
     private static final int REQUEST_QR = 4104;
     private static final int VIDEO_PORT = 48888;
     private static final int AUDIO_PORT = 48889;
-    private static final int CONTROL_PORT = 48890;
 
     private Spinner resolutionSpinner;
     private Spinner fpsSpinner;
@@ -95,7 +93,7 @@ public class MainActivity extends Activity {
         page.addView(title, matchWrap());
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("Offline screen mirroring • Auto rotate");
+        subtitle.setText("Offline screen mirroring • Portrait • Local Wi-Fi");
         subtitle.setTextColor(Color.rgb(161, 174, 196));
         subtitle.setTextSize(14);
         subtitle.setGravity(Gravity.CENTER);
@@ -183,25 +181,6 @@ public class MainActivity extends Activity {
         page.addView(showQrButton, showQrParams);
         showQrButton.setOnClickListener(v -> showHostQr());
 
-        Button accessibilityButton = makeButton("ENABLE REMOTE TOUCH ON THIS PHONE", Color.rgb(91, 72, 132));
-        LinearLayout.LayoutParams accessibilityParams = matchWrap();
-        accessibilityParams.topMargin = dp(8);
-        page.addView(accessibilityButton, accessibilityParams);
-        accessibilityButton.setOnClickListener(v -> {
-            new AlertDialog.Builder(this)
-                    .setTitle("Aktifkan Remote Touch di Android 14")
-                    .setMessage("Karena OfflineMirror dipasang dari file APK, Android 13/14 dapat memblokir layanan aksesibilitas. Langkahnya: 1) Buka Info Aplikasi. 2) Tekan menu ⋮ di kanan atas. 3) Pilih Izinkan setelan terbatas / Allow restricted settings. 4) Kembali, buka Aksesibilitas > Aplikasi terunduh > OfflineMirror Remote Touch, lalu aktifkan. Android meminta langkah ini demi keamanan; aplikasi tidak dapat mengaktifkannya sendiri.")
-                    .setNegativeButton("Tutup", null)
-                    .setNeutralButton("Buka Aksesibilitas", (dialog, which) ->
-                            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
-                    .setPositiveButton("Buka Info Aplikasi", (dialog, which) -> {
-                        Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                Uri.parse("package:" + getPackageName()));
-                        startActivity(details);
-                    })
-                    .show();
-        });
-
         Button stopButton = makeButton("STOP SHARING", Color.rgb(151, 54, 66));
         LinearLayout.LayoutParams stopParams = matchWrap();
         stopParams.topMargin = dp(8);
@@ -259,7 +238,7 @@ public class MainActivity extends Activity {
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP, port, dan pairing key sesi Host. Scan hanya QR dari HP yang Anda percaya. Remote touch memerlukan izin Accessibility dari pemilik Host. Audio capture memerlukan Android 10+ dan dapat diblokir oleh aplikasi tertentu.");
+        note.setText("QR berisi IP, port, dan pairing key sesi Host. Untuk dua HP, aktifkan hotspot di salah satu HP lalu sambungkan HP lainnya ke hotspot tersebut. Internet tidak diperlukan; masukkan IP HP Host pada Viewer. Audio capture memerlukan Android 10+ dan dapat dibatasi oleh aplikasi tertentu.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
@@ -421,7 +400,6 @@ public class MainActivity extends Activity {
         viewer.putExtra("audioEnabled", viewerAudioCheck != null && viewerAudioCheck.isChecked());
         viewer.putExtra("videoPort", VIDEO_PORT);
         viewer.putExtra("audioPort", AUDIO_PORT);
-        viewer.putExtra("controlPort", CONTROL_PORT);
         startActivity(viewer);
     }
 
