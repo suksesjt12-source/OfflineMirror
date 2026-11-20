@@ -175,7 +175,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private void joinQuietly(Thread thread) {
         if (thread == null || thread == Thread.currentThread()) return;
         try {
-            thread.join(2500);
+            thread.join();
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
         }
