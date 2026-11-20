@@ -42,6 +42,7 @@ public class MirrorHostService extends Service {
     private static final int AUDIO_PORT = 48889;
     private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
+    private static final int CONTROL_MAGIC = 0x4F4D4354;
 
     private volatile boolean running = false;
     private boolean audioEnabled = false;
@@ -309,43 +310,69 @@ public class MirrorHostService extends Service {
     }
 
     private void serveControl() {
-        DataInputStream input = null;
-        try {
-            controlClientSocket = acceptAuthenticated(controlServerSocket, "control");
-            controlClientSocket.setTcpNoDelay(true);
-            input = new DataInputStream(
-                    new BufferedInputStream(controlClientSocket.getInputStream()));
+        // Keep the control listener alive so a Viewer can reconnect without
+        // restarting screen capture. This is deliberately isolated from video.
+        while (running && controlServerSocket != null && !controlServerSocket.isClosed()) {
+            Socket client = null;
+            DataInputStream input = null;
+            DataOutputStream output = null;
+            try {
+                client = acceptAuthenticated(controlServerSocket, "control");
+                client.setTcpNoDelay(true);
+                controlClientSocket = client;
 
-            while (running && controlClientSocket != null && !controlClientSocket.isClosed()) {
-                int type = input.readUnsignedByte();
-                float x1 = input.readFloat();
-                float y1 = input.readFloat();
-                float x2 = x1;
-                float y2 = y1;
-                if (type == 3) {
-                    x2 = input.readFloat();
-                    y2 = input.readFloat();
-                } else if (type != 1 && type != 2) {
-                    throw new IOException("Unknown remote gesture type");
+                input = new DataInputStream(
+                        new BufferedInputStream(client.getInputStream()));
+                output = new DataOutputStream(
+                        new BufferedOutputStream(client.getOutputStream()));
+
+                // Tell the Viewer that this connection is the touch-control channel
+                // and whether Android Accessibility is enabled on the Host.
+                output.writeInt(CONTROL_MAGIC);
+                output.writeBoolean(RemoteAccessibilityService.isEnabled());
+                output.flush();
+
+                while (running && !client.isClosed()) {
+                    int type = input.readUnsignedByte();
+                    float x1 = input.readFloat();
+                    float y1 = input.readFloat();
+                    float x2 = x1;
+                    float y2 = y1;
+
+                    if (type == 3) {
+                        x2 = input.readFloat();
+                        y2 = input.readFloat();
+                    } else if (type != 1 && type != 2) {
+                        throw new IOException("Unknown remote gesture type");
+                    }
+
+                    int duration = input.readInt();
+                    if (!isUnitCoordinate(x1) || !isUnitCoordinate(y1)
+                            || !isUnitCoordinate(x2) || !isUnitCoordinate(y2)) {
+                        throw new IOException("Remote gesture coordinates are invalid");
+                    }
+
+                    boolean accessibilityEnabled = RemoteAccessibilityService.isEnabled();
+                    if (accessibilityEnabled) {
+                        RemoteAccessibilityService.dispatchRemoteGesture(
+                                type, x1, y1, x2, y2, duration);
+                    }
+
+                    // Acknowledge each gesture so the Viewer can show the real Host state.
+                    output.writeByte(accessibilityEnabled ? 1 : 0);
+                    output.flush();
                 }
-                int duration = input.readInt();
-                if (!isUnitCoordinate(x1) || !isUnitCoordinate(y1)
-                        || !isUnitCoordinate(x2) || !isUnitCoordinate(y2)) {
-                    throw new IOException("Remote gesture coordinates are invalid");
+            } catch (Exception error) {
+                if (running) {
+                    android.util.Log.w("OfflineMirror",
+                            "Remote Control disconnected: " + error.getMessage());
                 }
-                RemoteAccessibilityService.dispatchRemoteGesture(
-                        type, x1, y1, x2, y2, duration);
+            } finally {
+                try { if (input != null) input.close(); } catch (Exception ignored) {}
+                try { if (output != null) output.close(); } catch (Exception ignored) {}
+                try { if (client != null) client.close(); } catch (Exception ignored) {}
+                if (controlClientSocket == client) controlClientSocket = null;
             }
-        } catch (Exception error) {
-            if (running) {
-                android.util.Log.w("OfflineMirror",
-                        "Remote Control disconnected: " + error.getMessage());
-            }
-        } finally {
-            try { if (input != null) input.close(); } catch (Exception ignored) {}
-            try { if (controlClientSocket != null) controlClientSocket.close(); }
-            catch (Exception ignored) {}
-            controlClientSocket = null;
         }
     }
 
