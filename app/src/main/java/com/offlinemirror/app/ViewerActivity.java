@@ -281,7 +281,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             overlayToggle.setVisibility(View.GONE);
             gamepadBar.setVisibility(View.GONE);
             toolsScroll.setVisibility(View.GONE);
-            hudToggle.setVisibility(View.GONE);
             controlStatus = "Mode penonton • video saja";
         }
         overlayToggle.setOnClickListener(button -> {
@@ -311,6 +310,12 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             hudToggle.setText(hudShown[0] ? "HUD −" : "HUD +");
         };
         applyHudVisibility.run();
+        if (!controlEnabled) {
+            status.setVisibility(View.GONE);
+            gamepadBar.setVisibility(View.GONE);
+            toolsScroll.setVisibility(View.GONE);
+            hudToggle.setVisibility(View.GONE);
+        }
         hudToggle.setOnClickListener(button -> {
             hudShown[0] = !hudShown[0];
             applyHudVisibility.run();
