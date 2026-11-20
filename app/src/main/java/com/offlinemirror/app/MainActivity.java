@@ -260,7 +260,7 @@ public class MainActivity extends Activity {
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP, port, dan pairing key sesi Host. Untuk dua HP, aktifkan hotspot di salah satu HP lalu sambungkan HP lainnya ke hotspot tersebut. Internet tidak diperlukan; masukkan IP HP Host pada Viewer. Audio capture memerlukan Android 10+ dan dapat dibatasi oleh aplikasi tertentu.");
+        note.setText("QR berisi IP, port, dan pairing key sesi Host. Untuk dua HP, aktifkan hotspot di salah satu HP lalu sambungkan HP lainnya ke hotspot tersebut. Internet tidak diperlukan. Kompatibilitas: Android 5.0+ untuk tampilan layar, Android 7.0+ untuk kendali sentuh, dan Android 10+ untuk audio. Beberapa aplikasi dapat membatasi capture layar.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
@@ -272,7 +272,10 @@ public class MainActivity extends Activity {
     }
 
     private void startQrScanner() {
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+        // Android 5.0–5.1 grants manifest permissions at install time.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && checkSelfPermission(Manifest.permission.CAMERA)
+                        != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
             return;
         }
