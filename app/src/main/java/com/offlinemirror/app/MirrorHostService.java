@@ -40,7 +40,6 @@ public class MirrorHostService extends Service {
     private static final int NOTIFICATION_ID = 71;
     private static final int VIDEO_PORT = 48888;
     private static final int AUDIO_PORT = 48889;
-    private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
 
     private volatile boolean running = false;
@@ -49,16 +48,13 @@ public class MirrorHostService extends Service {
 
     private ServerSocket videoServerSocket;
     private ServerSocket audioServerSocket;
-    private ServerSocket controlServerSocket;
     private Socket videoClientSocket;
     private Socket audioClientSocket;
-    private Socket controlClientSocket;
 
     private MediaProjection projection;
     private MediaProjection.Callback projectionCallback;
     private Thread videoThread;
     private Thread audioThread;
-    private Thread controlThread;
     private AudioRecord audioRecord;
 
     @Override
@@ -120,7 +116,6 @@ public class MirrorHostService extends Service {
 
             // Prepare the local listening ports before the Viewer connects.
             videoServerSocket = openServerSocket(VIDEO_PORT);
-            controlServerSocket = openServerSocket(CONTROL_PORT);
             if (audioEnabled && Build.VERSION.SDK_INT >= 29) {
                 audioServerSocket = openServerSocket(AUDIO_PORT);
             }
@@ -131,9 +126,7 @@ public class MirrorHostService extends Service {
 
             videoThread = new Thread(() -> streamVideo(maxDimension, fps, bitrate),
                     "OfflineMirror-Video");
-            controlThread = new Thread(this::serveControl, "OfflineMirror-Control");
             videoThread.start();
-            controlThread.start();
 
             if (audioEnabled && Build.VERSION.SDK_INT >= 29) {
                 audioThread = new Thread(this::serveAudio, "OfflineMirror-Audio");
@@ -302,41 +295,6 @@ public class MirrorHostService extends Service {
         }
     }
 
-    private void serveControl() {
-        try {
-            controlClientSocket = acceptAuthenticated(controlServerSocket, "control");
-            controlClientSocket.setTcpNoDelay(true);
-
-            DataInputStream input = new DataInputStream(
-                    new BufferedInputStream(controlClientSocket.getInputStream()));
-
-            while (running && !controlClientSocket.isClosed()) {
-                int type = input.readUnsignedByte();
-                if (type == 1 || type == 2) {
-                    float x = input.readFloat();
-                    float y = input.readFloat();
-                    int duration = input.readInt();
-                    RemoteAccessibilityService.dispatchRemoteGesture(
-                            type, x, y, x, y, duration);
-                } else if (type == 3) {
-                    float x1 = input.readFloat();
-                    float y1 = input.readFloat();
-                    float x2 = input.readFloat();
-                    float y2 = input.readFloat();
-                    int duration = input.readInt();
-                    RemoteAccessibilityService.dispatchRemoteGesture(
-                            type, x1, y1, x2, y2, duration);
-                } else {
-                    throw new IllegalArgumentException("Unknown remote touch command");
-                }
-            }
-        } catch (Exception error) {
-            if (running) android.util.Log.w("OfflineMirror", "Remote touch disconnected: " + error.getMessage());
-        } finally {
-            try { if (controlClientSocket != null) controlClientSocket.close(); } catch (Exception ignored) {}
-        }
-    }
-
     private Socket acceptAuthenticated(ServerSocket server, String channel) throws IOException {
         while (running) {
             Socket candidate = server.accept();
@@ -380,18 +338,12 @@ public class MirrorHostService extends Service {
         int[] size = scaledSize(metrics, maxDimension);
 
         MediaCodec encoder = createEncoder(size[0], size[1], fps, bitrate);
-        android.util.Log.i("OfflineMirror", "Starting screen capture encoder at "
-                + size[0] + "x" + size[1]);
         Surface surface = null;
         VirtualDisplay virtualDisplay = null;
         try {
-            // Important for affected OEM devices: start the encoder before connecting
-            // VirtualDisplay to its input Surface. This is the startup order that fixed
-            // black H.264 output in the earlier working build.
+            // Restore the original capture startup order used by the first working build:
+            // attach the configured input Surface to VirtualDisplay, then start the encoder.
             surface = encoder.createInputSurface();
-            encoder.start();
-            requestSyncFrame(encoder);
-
             virtualDisplay = projection.createVirtualDisplay(
                     "OfflineMirror", size[0], size[1], metrics.densityDpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
@@ -399,10 +351,11 @@ public class MirrorHostService extends Service {
             if (virtualDisplay == null) {
                 throw new IllegalStateException("Unable to create virtual display");
             }
-
-            // Ask for a fresh IDR after the projection display begins feeding the encoder.
+            encoder.start();
             requestSyncFrame(encoder);
-            android.util.Log.i("OfflineMirror", "VirtualDisplay attached to running AVC encoder");
+            android.util.Log.i("OfflineMirror", "VirtualDisplay created before AVC encoder start: "
+                    + size[0] + "x" + size[1]);
+
             return new EncoderSession(encoder, virtualDisplay, surface,
                     size[0], size[1], display.getRotation());
         } catch (Exception error) {
@@ -466,20 +419,16 @@ public class MirrorHostService extends Service {
             throws Exception {
         MediaFormat format = MediaFormat.createVideoFormat(
                 MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
-        format.setInteger(MediaFormat.KEY_COLOR_FORMAT,
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+        // Match the original MediaCodec surface-input profile.
+        format.setInteger(MediaFormat.KEY_COLOR_FORMAT, 0x7F000789);
         format.setInteger(MediaFormat.KEY_BIT_RATE, Math.max(500_000, bitrate));
         format.setInteger(MediaFormat.KEY_FRAME_RATE, Math.max(10, Math.min(60, fps)));
-        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2);
+        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
 
-        // Use Android's default AVC encoder selection. The previous manual
-        // hardware-codec ranking selected encoders that compiled successfully
-        // but produced no visible frames on some OEM devices.
         MediaCodec encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
         try {
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-            android.util.Log.i("OfflineMirror", "Using default AVC encoder: "
-                    + encoder.getName());
+            android.util.Log.i("OfflineMirror", "Configured AVC encoder: " + encoder.getName());
             return encoder;
         } catch (Exception error) {
             try { encoder.release(); } catch (Exception ignored) {}
@@ -531,8 +480,6 @@ public class MirrorHostService extends Service {
         try { if (videoServerSocket != null) videoServerSocket.close(); } catch (Exception ignored) {}
         try { if (audioClientSocket != null) audioClientSocket.close(); } catch (Exception ignored) {}
         try { if (audioServerSocket != null) audioServerSocket.close(); } catch (Exception ignored) {}
-        try { if (controlClientSocket != null) controlClientSocket.close(); } catch (Exception ignored) {}
-        try { if (controlServerSocket != null) controlServerSocket.close(); } catch (Exception ignored) {}
     }
 
     private void stopStreaming() {
