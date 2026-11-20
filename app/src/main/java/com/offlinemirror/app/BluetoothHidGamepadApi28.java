@@ -9,9 +9,11 @@ import android.bluetooth.BluetoothProfile;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -59,12 +61,17 @@ public final class BluetoothHidGamepadApi28
     private final Executor callbackExecutor = command -> mainHandler.post(command);
 
     private BluetoothAdapter adapter;
-    private BluetoothHidDevice hid;
-    private BluetoothDevice connectedDevice;
-    private boolean registered;
-    private boolean started;
+    private volatile BluetoothHidDevice hid;
+    private volatile BluetoothDevice connectedDevice;
+    private volatile boolean registered;
+    private volatile boolean started;
     private boolean discoverableRequested;
-    private byte[] lastReport = new byte[] {0, 0, 0, 0, 0, 0};
+    private volatile byte[] lastReport = new byte[] {0, 0, 0, 0, 0, 0};
+    private volatile byte[] lastSentReport;
+    private final Object reportLock = new Object();
+    private boolean reportPending;
+    private volatile Handler reportHandler;
+    private HandlerThread reportThread;
 
     public BluetoothHidGamepadApi28(Activity activity, GamepadController.Listener listener) {
         this.activity = activity;
@@ -93,6 +100,7 @@ public final class BluetoothHidGamepadApi28
             return;
         }
 
+        ensureReportThread();
         started = true;
         postStatus("Meminta layanan Bluetooth HID...");
         boolean requested = adapter.getProfileProxy(
@@ -101,6 +109,14 @@ public final class BluetoothHidGamepadApi28
             started = false;
             postStatus("Bluetooth HID Gamepad tidak didukung oleh sistem HP Viewer.");
         }
+    }
+
+    private void ensureReportThread() {
+        if (reportThread != null && reportThread.isAlive()) return;
+        HandlerThread thread = new HandlerThread("OfflineMirror-HID-Reports");
+        thread.start();
+        reportThread = thread;
+        reportHandler = new Handler(thread.getLooper());
     }
 
     @Override
@@ -155,12 +171,14 @@ public final class BluetoothHidGamepadApi28
             if (state == BluetoothProfile.STATE_CONNECTED) {
                 connectedDevice = device;
                 lastReport = neutralReport();
+                lastSentReport = null;
                 sendLastReport();
                 postStatus("Bluetooth Gamepad TERHUBUNG ke " + safeName(device) + ".");
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
                 if (connectedDevice != null && connectedDevice.equals(device)) {
                     connectedDevice = null;
                 }
+                lastSentReport = null;
                 postStatus("Gamepad terputus. Pilih ulang HP Host dari daftar perangkat.");
             } else if (state == BluetoothProfile.STATE_CONNECTING) {
                 postStatus("Menghubungkan Bluetooth Gamepad ke " + safeName(device) + "...");
@@ -262,14 +280,51 @@ public final class BluetoothHidGamepadApi28
         return sendLastReport();
     }
 
+    /**
+     * Coalesce rapid joystick MOVE events and send at most one HID report
+     * every 16 ms. Bluetooth Binder calls run off the UI thread, so they
+     * cannot stall drawing or the video Surface when touch events arrive fast.
+     */
     private boolean sendLastReport() {
         if (!isConnected()) return false;
-        try {
-            return hid.sendReport(connectedDevice, REPORT_ID, lastReport.clone());
-        } catch (SecurityException error) {
-            postStatus("Izin Bluetooth dicabut. Aktifkan ulang izin Bluetooth.");
-            return false;
+        Handler handler = reportHandler;
+        if (handler == null) return false;
+
+        synchronized (reportLock) {
+            if (reportPending) return true;
+            reportPending = true;
         }
+
+        boolean posted = handler.postDelayed(() -> {
+            synchronized (reportLock) {
+                reportPending = false;
+            }
+
+            BluetoothHidDevice service = hid;
+            BluetoothDevice device = connectedDevice;
+            if (service == null || device == null || !registered) return;
+
+            byte[] report = lastReport.clone();
+            byte[] previous = lastSentReport;
+            if (previous != null && Arrays.equals(previous, report)) return;
+
+            lastSentReport = report.clone();
+            try {
+                if (!service.sendReport(device, REPORT_ID, report)) {
+                    lastSentReport = null;
+                }
+            } catch (SecurityException error) {
+                lastSentReport = null;
+                postStatus("Izin Bluetooth dicabut. Aktifkan ulang izin Bluetooth.");
+            }
+        }, 16);
+
+        if (!posted) {
+            synchronized (reportLock) {
+                reportPending = false;
+            }
+        }
+        return posted;
     }
 
     private byte[] neutralReport() {
@@ -310,5 +365,13 @@ public final class BluetoothHidGamepadApi28
         connectedDevice = null;
         registered = false;
         started = false;
+        lastSentReport = null;
+        HandlerThread thread = reportThread;
+        reportThread = null;
+        reportHandler = null;
+        synchronized (reportLock) {
+            reportPending = false;
+        }
+        if (thread != null) thread.quitSafely();
     }
 }
