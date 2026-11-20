@@ -52,6 +52,7 @@ public class MainActivity extends Activity {
     private Spinner resolutionSpinner;
     private Spinner fpsSpinner;
     private Spinner bitrateSpinner;
+    private CheckBox adaptiveFpsCheck;
     private EditText addressInput;
     private EditText keyInput;
     private CheckBox audioCheck;
@@ -107,9 +108,19 @@ public class MainActivity extends Activity {
         addSectionTitle(page, "HOST MODE — SHARE THIS PHONE");
         addLabel(page, "Video quality");
         resolutionSpinner = addSpinner(page, new String[]{"720p (recommended)", "1080p (higher bandwidth)"});
-        addLabel(page, "Frame rate");
-        fpsSpinner = addSpinner(page, new String[]{"15 FPS", "24 FPS", "30 FPS"});
+        addLabel(page, "Batas frame rate maksimum");
+        fpsSpinner = addSpinner(page, new String[]{"15 FPS", "24 FPS", "30 FPS", "60 FPS"});
         fpsSpinner.setSelection(2);
+
+        adaptiveFpsCheck = new CheckBox(this);
+        adaptiveFpsCheck.setText("Adaptive FPS otomatis sesuai kemampuan HP");
+        adaptiveFpsCheck.setTextColor(Color.rgb(196, 207, 224));
+        adaptiveFpsCheck.setTextSize(13);
+        adaptiveFpsCheck.setChecked(true);
+        LinearLayout.LayoutParams adaptiveFpsParams = matchWrap();
+        adaptiveFpsParams.topMargin = dp(4);
+        page.addView(adaptiveFpsCheck, adaptiveFpsParams);
+
         addLabel(page, "Bitrate");
         bitrateSpinner = addSpinner(page, new String[]{"2 Mbps", "4 Mbps", "6 Mbps"});
         bitrateSpinner.setSelection(1);
@@ -542,7 +553,9 @@ public class MainActivity extends Activity {
         }
 
         int maxDimension = resolutionSpinner.getSelectedItemPosition() == 0 ? 1280 : 1920;
-        int fps = new int[]{15, 24, 30}[fpsSpinner.getSelectedItemPosition()];
+        int maxFps = new int[]{15, 24, 30, 60}[fpsSpinner.getSelectedItemPosition()];
+        boolean adaptiveFps = adaptiveFpsCheck != null && adaptiveFpsCheck.isChecked();
+        int fps = adaptiveFps ? Math.min(30, maxFps) : maxFps;
         int bitrate = new int[]{2, 4, 6}[bitrateSpinner.getSelectedItemPosition()] * 1_000_000;
         sessionKey = UUID.randomUUID().toString().replace("-", "");
         if (hostKeyText != null) hostKeyText.setText("Pairing key: " + sessionKey);
@@ -553,6 +566,8 @@ public class MainActivity extends Activity {
         service.putExtra("projectionData", data);
         service.putExtra("maxDimension", maxDimension);
         service.putExtra("fps", fps);
+        service.putExtra("maxFps", maxFps);
+        service.putExtra("adaptiveFps", adaptiveFps);
         service.putExtra("bitrate", bitrate);
         service.putExtra("sessionKey", sessionKey);
         service.putExtra("audioEnabled", audioCheck.isChecked() && Build.VERSION.SDK_INT >= 29);
@@ -564,7 +579,10 @@ public class MainActivity extends Activity {
         }
         hostAddress.setText("Alamat HP ini (IP lokal): " + NetworkAddress.getLocalIpv4(this)
                 + "  •  Port Host: " + VIDEO_PORT);
-        setStatus("Host siap. Salin IP Host dan pairing key ke HP Viewer.");
+        setStatus("Host siap. " + (adaptiveFps
+                ? "Adaptive FPS aktif, batas " + maxFps + " FPS. "
+                : "FPS manual " + fps + ". ")
+                + "Salin IP Host dan pairing key ke HP Viewer.");
     }
 
     @Override

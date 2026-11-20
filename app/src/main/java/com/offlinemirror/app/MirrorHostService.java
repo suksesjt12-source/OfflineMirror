@@ -20,6 +20,8 @@ import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.Display;
 import android.view.Surface;
@@ -147,10 +149,18 @@ public class MirrorHostService extends Service {
             }
 
             int maxDimension = intent.getIntExtra("maxDimension", 1280);
-            int fps = intent.getIntExtra("fps", 30);
+            int maxFps = normalizeFps(intent.getIntExtra(
+                    "maxFps", intent.getIntExtra("fps", 30)));
+            boolean adaptiveFps = intent.getBooleanExtra("adaptiveFps", false);
+            int requestedFps = Math.min(maxFps,
+                    normalizeFps(intent.getIntExtra("fps", 30)));
+            // Adaptive sessions begin at 30 FPS or below, then rise only after
+            // several stable measurement windows.
+            final int initialFps = adaptiveFps ? Math.min(30, maxFps) : requestedFps;
             int bitrate = intent.getIntExtra("bitrate", 4_000_000);
 
-            videoThread = new Thread(() -> streamVideo(maxDimension, fps, bitrate),
+            videoThread = new Thread(
+                    () -> streamVideo(maxDimension, initialFps, bitrate, adaptiveFps, maxFps),
                     "OfflineMirror-Video");
             videoThread.start();
 
@@ -166,6 +176,13 @@ public class MirrorHostService extends Service {
         return START_NOT_STICKY;
     }
 
+    private int normalizeFps(int value) {
+        if (value >= 60) return 60;
+        if (value >= 30) return 30;
+        if (value >= 24) return 24;
+        return 15;
+    }
+
     @SuppressWarnings("deprecation")
     private Intent getProjectionData(Intent source) {
         if (Build.VERSION.SDK_INT >= 33) {
@@ -174,8 +191,14 @@ public class MirrorHostService extends Service {
         return source.getParcelableExtra("projectionData");
     }
 
-    private void streamVideo(int maxDimension, int fps, int bitrate) {
+    private void streamVideo(int maxDimension, int fps, int bitrate,
+                             boolean adaptiveFps, int maxFps) {
         EncoderSession session = null;
+        int activeFps = fps;
+        PowerManager powerManager =
+                (PowerManager) getSystemService(Context.POWER_SERVICE);
+        AdaptiveFpsController adaptiveController =
+                new AdaptiveFpsController(adaptiveFps, maxFps, powerManager);
         DataOutputStream output = null;
         boolean streamHeaderSent = false;
         boolean streamHeaderEverSent = false;
@@ -189,7 +212,7 @@ public class MirrorHostService extends Service {
             output = new DataOutputStream(new BufferedOutputStream(
                     videoClientSocket.getOutputStream(), 8 * 1024));
 
-            session = createInitialSession(maxDimension, fps, bitrate);
+            session = createInitialSession(maxDimension, activeFps, bitrate);
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
 
             long framesSent = 0;
@@ -209,7 +232,7 @@ public class MirrorHostService extends Service {
                         || currentSize[1] != session.height) {
                     int oldWidth = session.width;
                     int oldHeight = session.height;
-                    session = reconfigureSession(session, maxDimension, fps, bitrate);
+                    session = reconfigureSession(session, maxDimension, activeFps, bitrate);
                     // Do not send frames from the new encoder until its SPS/PPS
                     // header has been sent to the Viewer.
                     streamHeaderSent = false;
@@ -221,7 +244,20 @@ public class MirrorHostService extends Service {
                 }
 
                 int index = session.encoder.dequeueOutputBuffer(info, 10_000);
-                if (index == MediaCodec.INFO_TRY_AGAIN_LATER) continue;
+                if (index == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                    int nextFps = adaptiveController.evaluate(
+                            activeFps, SystemClock.elapsedRealtime());
+                    if (nextFps != activeFps) {
+                        int previousFps = activeFps;
+                        session = reconfigureSession(
+                                session, maxDimension, nextFps, bitrate);
+                        activeFps = nextFps;
+                        streamHeaderSent = false;
+                        android.util.Log.i("OfflineMirror", "Adaptive FPS "
+                                + previousFps + " -> " + activeFps);
+                    }
+                    continue;
+                }
 
                 if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     MediaFormat outputFormat = session.encoder.getOutputFormat();
@@ -258,6 +294,7 @@ public class MirrorHostService extends Service {
                             output.write(packet);
                             output.flush();
                             framesSent++;
+                            adaptiveController.recordFrameSent();
                             bytesSent += packet.length;
                             if (framesSent == 1 || framesSent % 120 == 0) {
                                 android.util.Log.i("OfflineMirror", "H.264 frames sent="
@@ -269,6 +306,18 @@ public class MirrorHostService extends Service {
                     if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break;
                 } finally {
                     session.encoder.releaseOutputBuffer(index, false);
+                }
+
+                int nextFps = adaptiveController.evaluate(
+                        activeFps, SystemClock.elapsedRealtime());
+                if (nextFps != activeFps) {
+                    int previousFps = activeFps;
+                    session = reconfigureSession(
+                            session, maxDimension, nextFps, bitrate);
+                    activeFps = nextFps;
+                    streamHeaderSent = false;
+                    android.util.Log.i("OfflineMirror", "Adaptive FPS "
+                            + previousFps + " -> " + activeFps);
                 }
             }
         } catch (Exception error) {
@@ -704,6 +753,119 @@ public class MirrorHostService extends Service {
                     .addMatchingUsage(AudioAttributes.USAGE_GAME)
                     .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
                     .build();
+        }
+    }
+
+    /**
+     * Adjusts encoder FPS from sent-frame throughput and Android thermal status.
+     * Sampling is performed every three seconds; no polling thread is created.
+     */
+    private static final class AdaptiveFpsController {
+        private static final long SAMPLE_WINDOW_MS = 3_000L;
+        private static final long UPGRADE_COOLDOWN_MS = 20_000L;
+        private static final int MIN_SAMPLE_FRAMES = 8;
+
+        private final boolean enabled;
+        private final int maxFps;
+        private final PowerManager powerManager;
+        private long windowStartedMs = SystemClock.elapsedRealtime();
+        private long nextUpgradeAllowedMs = 0L;
+        private int framesInWindow = 0;
+        private int slowWindows = 0;
+        private int stableWindows = 0;
+
+        AdaptiveFpsController(boolean enabled, int maxFps, PowerManager powerManager) {
+            this.enabled = enabled;
+            this.maxFps = maxFps;
+            this.powerManager = powerManager;
+        }
+
+        void recordFrameSent() {
+            if (enabled) framesInWindow++;
+        }
+
+        int evaluate(int currentFps, long nowMs) {
+            if (!enabled || nowMs - windowStartedMs < SAMPLE_WINDOW_MS) {
+                return currentFps;
+            }
+
+            long elapsedMs = Math.max(1L, nowMs - windowStartedMs);
+            int sampleFrames = framesInWindow;
+            framesInWindow = 0;
+            windowStartedMs = nowMs;
+
+            int thermalStatus = readThermalStatus();
+            int nextFps = currentFps;
+
+            if (thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE
+                    && currentFps > 15) {
+                nextFps = lowerFps(currentFps);
+                slowWindows = 0;
+                stableWindows = 0;
+                nextUpgradeAllowedMs = nowMs + UPGRADE_COOLDOWN_MS;
+            } else if (sampleFrames < MIN_SAMPLE_FRAMES) {
+                // Little screen activity is not evidence that the encoder is slow.
+                slowWindows = 0;
+                stableWindows = 0;
+                return currentFps;
+            } else {
+                double observedFps = sampleFrames * 1000.0 / elapsedMs;
+                if (observedFps < currentFps * 0.78) {
+                    slowWindows++;
+                    stableWindows = 0;
+                    if (slowWindows >= 2 && currentFps > 15) {
+                        nextFps = lowerFps(currentFps);
+                        slowWindows = 0;
+                        nextUpgradeAllowedMs = nowMs + UPGRADE_COOLDOWN_MS;
+                    }
+                } else if (observedFps >= currentFps * 0.90
+                        && thermalStatus <= PowerManager.THERMAL_STATUS_LIGHT) {
+                    slowWindows = 0;
+                    if (nowMs >= nextUpgradeAllowedMs) {
+                        stableWindows++;
+                    } else {
+                        stableWindows = 0;
+                    }
+                    if (stableWindows >= 4 && currentFps < maxFps) {
+                        nextFps = higherFps(currentFps);
+                        stableWindows = 0;
+                        nextUpgradeAllowedMs = nowMs + UPGRADE_COOLDOWN_MS;
+                    }
+                } else {
+                    slowWindows = 0;
+                    stableWindows = 0;
+                }
+            }
+
+            if (nextFps != currentFps) {
+                android.util.Log.i("OfflineMirror", "Adaptive controller: sent="
+                        + sampleFrames + " frames/" + elapsedMs + "ms, thermal="
+                        + thermalStatus + ", FPS " + currentFps + " -> " + nextFps);
+            }
+            return nextFps;
+        }
+
+        private int readThermalStatus() {
+            if (Build.VERSION.SDK_INT >= 29 && powerManager != null) {
+                try {
+                    return powerManager.getCurrentThermalStatus();
+                } catch (Exception ignored) {
+                    // Frame throughput remains available as a fallback signal.
+                }
+            }
+            return PowerManager.THERMAL_STATUS_NONE;
+        }
+
+        private int lowerFps(int currentFps) {
+            if (currentFps >= 60) return 30;
+            if (currentFps >= 30) return 24;
+            return 15;
+        }
+
+        private int higherFps(int currentFps) {
+            if (currentFps <= 15) return 24;
+            if (currentFps <= 24) return 30;
+            return 60;
         }
     }
 
