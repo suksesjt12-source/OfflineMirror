@@ -535,31 +535,42 @@ public class MirrorHostService extends Service {
 
                 while (running && !client.isClosed()) {
                     int type = input.readUnsignedByte();
+                    boolean accessibilityEnabled = RemoteAccessibilityService.isEnabled();
+                    if (type == 4) {
+                        int buttons = input.readInt();
+                        float leftX = input.readFloat();
+                        float leftY = input.readFloat();
+                        if (!isUnitAxis(leftX) || !isUnitAxis(leftY)) {
+                            throw new IOException("Wi-Fi gamepad axes are invalid");
+                        }
+                        if (accessibilityEnabled) {
+                            RemoteAccessibilityService.dispatchRemoteGamepadState(
+                                    buttons, leftX, leftY);
+                        }
+                        output.writeByte(accessibilityEnabled ? 1 : 0);
+                        output.flush();
+                        continue;
+                    }
+
                     float x1 = input.readFloat();
                     float y1 = input.readFloat();
                     float x2 = x1;
                     float y2 = y1;
-
                     if (type == 3) {
                         x2 = input.readFloat();
                         y2 = input.readFloat();
                     } else if (type != 1 && type != 2) {
-                        throw new IOException("Unknown remote gesture type");
+                        throw new IOException("Unknown remote control command");
                     }
-
                     int duration = input.readInt();
                     if (!isUnitCoordinate(x1) || !isUnitCoordinate(y1)
                             || !isUnitCoordinate(x2) || !isUnitCoordinate(y2)) {
                         throw new IOException("Remote gesture coordinates are invalid");
                     }
-
-                    boolean accessibilityEnabled = RemoteAccessibilityService.isEnabled();
                     if (accessibilityEnabled) {
                         RemoteAccessibilityService.dispatchRemoteGesture(
                                 type, x1, y1, x2, y2, duration);
                     }
-
-                    // Acknowledge each gesture so the Viewer can show the real Host state.
                     output.writeByte(accessibilityEnabled ? 1 : 0);
                     output.flush();
                 }
@@ -569,6 +580,9 @@ public class MirrorHostService extends Service {
                             "Remote Control disconnected: " + error.getMessage());
                 }
             } finally {
+                if (RemoteAccessibilityService.isEnabled()) {
+                    RemoteAccessibilityService.dispatchRemoteGamepadState(0, 0f, 0f);
+                }
                 try { if (input != null) input.close(); } catch (Exception ignored) {}
                 try { if (output != null) output.close(); } catch (Exception ignored) {}
                 try { if (client != null) client.close(); } catch (Exception ignored) {}
@@ -580,6 +594,11 @@ public class MirrorHostService extends Service {
     private boolean isUnitCoordinate(float value) {
         return !Float.isNaN(value) && !Float.isInfinite(value)
                 && value >= 0f && value <= 1f;
+    }
+
+    private boolean isUnitAxis(float value) {
+        return !Float.isNaN(value) && !Float.isInfinite(value)
+                && value >= -1f && value <= 1f;
     }
 
     private Socket acceptAuthenticated(ServerSocket server, String channel) throws IOException {

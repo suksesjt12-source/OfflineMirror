@@ -222,7 +222,7 @@ public class MainActivity extends Activity {
         remoteControlButton.setOnClickListener(v -> {
             new AlertDialog.Builder(this)
                     .setTitle("Aktifkan Remote Control pada HP Host")
-                    .setMessage("Aktifkan layanan ini hanya pada HP yang menjadi Host. Setelah aktif, sentuhan pada layar Viewer dapat mengirim tap, tekan lama, dan swipe ke HP Host. Layanan hanya mengirim gesture dan tidak membaca isi layar. Android 13/14 mungkin meminta izin setelan terbatas untuk aplikasi yang dipasang dari APK.")
+                    .setMessage("Aktifkan layanan ini hanya pada HP yang menjadi Host. Setelah aktif, sentuhan dan tombol gamepad virtual dari Viewer dikirim melalui Wi-Fi lokal. Gamepad ini mensimulasikan sentuhan pada posisi kontrol bawaan, bukan membuat gamepad HID universal; game dengan tata letak berbeda atau yang mewajibkan controller fisik mungkin tidak merespons. Layanan hanya mengirim gesture dan tidak membaca isi layar. Android 13/14 mungkin meminta izin setelan terbatas untuk aplikasi yang dipasang dari APK.")
                     .setNegativeButton("Nanti", null)
                     .setNeutralButton("Info Aplikasi", (dialog, which) -> {
                         Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
