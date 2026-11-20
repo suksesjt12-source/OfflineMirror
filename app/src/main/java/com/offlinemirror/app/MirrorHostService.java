@@ -5,8 +5,10 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.AudioAttributes;
@@ -45,9 +47,15 @@ public class MirrorHostService extends Service {
     private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
     private static final int CONTROL_MAGIC = 0x4F4D4354;
+    private static final long SCREEN_OFF_WAKE_LOCK_TIMEOUT_MS = 4L * 60L * 60L * 1000L;
 
     private volatile boolean running = false;
     private boolean audioEnabled = false;
+    private boolean keepCpuAwakeWhenScreenOff = false;
+    private volatile boolean displayIsOff = false;
+    private PowerManager.WakeLock screenOffWakeLock;
+    private BroadcastReceiver screenStateReceiver;
+    private boolean screenStateReceiverRegistered = false;
     private String sessionKey = "";
 
     private ServerSocket videoServerSocket;
@@ -84,6 +92,8 @@ public class MirrorHostService extends Service {
         int resultCode = intent.getIntExtra("resultCode", 0);
         Intent projectionData = getProjectionData(intent);
         audioEnabled = intent.getBooleanExtra("audioEnabled", false);
+        keepCpuAwakeWhenScreenOff = intent.getBooleanExtra(
+                "keepCpuAwakeWhenScreenOff", false);
         sessionKey = intent.getStringExtra("sessionKey");
         if (sessionKey == null || sessionKey.length() < 16 || sessionKey.length() > 128
                 || !sessionKey.matches("[A-Za-z0-9_-]+")) {
@@ -132,6 +142,7 @@ public class MirrorHostService extends Service {
             };
             projection.registerCallback(projectionCallback, new Handler(getMainLooper()));
             running = true;
+            if (keepCpuAwakeWhenScreenOff) registerScreenStateReceiver();
 
             // Prepare the local listening ports before the Viewer connects.
             videoServerSocket = openServerSocket(VIDEO_PORT);
@@ -174,6 +185,111 @@ public class MirrorHostService extends Service {
             stopSelf();
         }
         return START_NOT_STICKY;
+    }
+
+    private void registerScreenStateReceiver() {
+        if (screenStateReceiverRegistered || !keepCpuAwakeWhenScreenOff) return;
+
+        screenStateReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent == null) return;
+                String action = intent.getAction();
+                if (Intent.ACTION_SCREEN_OFF.equals(action)) {
+                    displayIsOff = true;
+                    acquireScreenOffWakeLock();
+                    refreshForegroundNotification();
+                } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
+                    displayIsOff = false;
+                    releaseScreenOffWakeLock();
+                    refreshForegroundNotification();
+                }
+            }
+        };
+
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(screenStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(screenStateReceiver, filter);
+            }
+            screenStateReceiverRegistered = true;
+
+            PowerManager powerManager =
+                    (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (powerManager != null && !powerManager.isInteractive()) {
+                displayIsOff = true;
+                acquireScreenOffWakeLock();
+            }
+        } catch (Exception error) {
+            android.util.Log.e("OfflineMirror",
+                    "Could not register screen-state receiver", error);
+            screenStateReceiver = null;
+            screenStateReceiverRegistered = false;
+        }
+    }
+
+    private void acquireScreenOffWakeLock() {
+        if (!keepCpuAwakeWhenScreenOff || !running) return;
+        try {
+            PowerManager powerManager =
+                    (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (powerManager == null) return;
+            if (screenOffWakeLock == null) {
+                screenOffWakeLock = powerManager.newWakeLock(
+                        PowerManager.PARTIAL_WAKE_LOCK,
+                        "OfflineMirror:ScreenOffStreaming");
+                screenOffWakeLock.setReferenceCounted(false);
+            }
+            if (!screenOffWakeLock.isHeld()) {
+                screenOffWakeLock.acquire(SCREEN_OFF_WAKE_LOCK_TIMEOUT_MS);
+                android.util.Log.i("OfflineMirror",
+                        "Screen is off; partial wake lock acquired for up to four hours");
+            }
+        } catch (Exception error) {
+            android.util.Log.e("OfflineMirror",
+                    "Could not acquire screen-off partial wake lock", error);
+        }
+    }
+
+    private void releaseScreenOffWakeLock() {
+        if (screenOffWakeLock != null) {
+            try {
+                if (screenOffWakeLock.isHeld()) screenOffWakeLock.release();
+            } catch (Exception error) {
+                android.util.Log.w("OfflineMirror",
+                        "Could not release screen-off partial wake lock", error);
+            } finally {
+                screenOffWakeLock = null;
+            }
+        }
+    }
+
+    private void unregisterScreenStateReceiver() {
+        if (screenStateReceiver != null && screenStateReceiverRegistered) {
+            try {
+                unregisterReceiver(screenStateReceiver);
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        screenStateReceiver = null;
+        screenStateReceiverRegistered = false;
+    }
+
+    private void refreshForegroundNotification() {
+        try {
+            NotificationManager manager =
+                    (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null && running) {
+                manager.notify(NOTIFICATION_ID, buildNotification());
+            }
+        } catch (Exception error) {
+            android.util.Log.w("OfflineMirror",
+                    "Could not refresh foreground notification", error);
+        }
     }
 
     private int normalizeFps(int value) {
@@ -678,6 +794,9 @@ public class MirrorHostService extends Service {
     private void stopStreaming() {
         running = false;
         sessionKey = "";
+        displayIsOff = false;
+        unregisterScreenStateReceiver();
+        releaseScreenOffWakeLock();
         closeSockets();
         if (audioRecord != null) {
             try { audioRecord.stop(); } catch (Exception ignored) {}
@@ -720,9 +839,14 @@ public class MirrorHostService extends Service {
         } else {
             builder = new Notification.Builder(this);
         }
+        String notificationText = keepCpuAwakeWhenScreenOff
+                ? (displayIsOff
+                    ? "Layar Host mati • CPU dijaga aktif (mode uji)"
+                    : "Screen sharing • mode layar mati siap")
+                : "Screen, optional audio and paired remote touch • local network";
         return builder
                 .setContentTitle("OfflineMirror is sharing")
-                .setContentText("Screen, optional audio and paired remote touch • local network")
+                .setContentText(notificationText)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setOngoing(true)
                 .addAction(android.R.drawable.ic_media_pause, "Stop", stopPending)

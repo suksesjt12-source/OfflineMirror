@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
     private Spinner fpsSpinner;
     private Spinner bitrateSpinner;
     private CheckBox adaptiveFpsCheck;
+    private CheckBox screenOffModeCheck;
     private EditText addressInput;
     private EditText keyInput;
     private CheckBox audioCheck;
@@ -134,6 +135,25 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams audioParams = matchWrap();
         audioParams.topMargin = dp(10);
         page.addView(audioCheck, audioParams);
+
+        screenOffModeCheck = new CheckBox(this);
+        screenOffModeCheck.setText("Screen-Off Mirroring (jaga CPU saat layar Host mati)");
+        screenOffModeCheck.setTextColor(Color.rgb(196, 207, 224));
+        screenOffModeCheck.setTextSize(13);
+        screenOffModeCheck.setChecked(true);
+        LinearLayout.LayoutParams screenOffParams = matchWrap();
+        screenOffParams.topMargin = dp(8);
+        page.addView(screenOffModeCheck, screenOffParams);
+
+        TextView screenOffHint = new TextView(this);
+        screenOffHint.setText("Setelah Viewer tersambung, tekan tombol Power Host sekali. CPU dijaga aktif hanya saat layar mati. Android tertentu tetap dapat menghentikan screen capture.");
+        screenOffHint.setTextColor(Color.rgb(135, 153, 180));
+        screenOffHint.setTextSize(12);
+        screenOffHint.setLineSpacing(dp(2), 1f);
+        LinearLayout.LayoutParams screenOffHintParams = matchWrap();
+        screenOffHintParams.leftMargin = dp(4);
+        screenOffHintParams.topMargin = dp(2);
+        page.addView(screenOffHint, screenOffHintParams);
 
         Button startButton = makeButton("START SCREEN SHARING", Color.rgb(43, 116, 235));
         LinearLayout.LayoutParams startParams = matchWrap();
@@ -571,6 +591,8 @@ public class MainActivity extends Activity {
         service.putExtra("bitrate", bitrate);
         service.putExtra("sessionKey", sessionKey);
         service.putExtra("audioEnabled", audioCheck.isChecked() && Build.VERSION.SDK_INT >= 29);
+        service.putExtra("keepCpuAwakeWhenScreenOff",
+                screenOffModeCheck != null && screenOffModeCheck.isChecked());
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(service);
@@ -582,6 +604,9 @@ public class MainActivity extends Activity {
         setStatus("Host siap. " + (adaptiveFps
                 ? "Adaptive FPS aktif, batas " + maxFps + " FPS. "
                 : "FPS manual " + fps + ". ")
+                + (screenOffModeCheck != null && screenOffModeCheck.isChecked()
+                ? "Mode layar mati siap: hubungkan Viewer lalu tekan tombol Power Host sekali. "
+                : "")
                 + "Salin IP Host dan pairing key ke HP Viewer.");
     }
 
