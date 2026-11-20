@@ -133,7 +133,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         status.setTextSize(11);
         status.setMaxLines(3);
         status.setGravity(Gravity.CENTER_VERTICAL);
-        status.setPadding(dp(12), dp(5), dp(12), dp(5));
+        status.setPadding(dp(12), dp(5), dp(72), dp(5));
         FrameLayout.LayoutParams statusParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52), Gravity.TOP);
         status.setBackgroundColor(0x99000000);
@@ -204,8 +204,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         });
         mouseOverlay.setVisibility(View.GONE);
         FrameLayout.LayoutParams mouseParams = new FrameLayout.LayoutParams(
-                dp(280), dp(104), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        mouseParams.topMargin = dp(140);
+                dp(260), dp(84), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        mouseParams.topMargin = dp(48);
         videoFrame.addView(mouseOverlay, mouseParams);
         videoFrame.setClipChildren(true);
         videoFrame.setClipToPadding(true);
@@ -285,9 +285,9 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         }
         overlayToggle.setOnClickListener(button -> {
             boolean visible = gamepadOverlay.getVisibility() == View.VISIBLE;
+            gamepadOverlay.releaseAllInputs();
             gamepadOverlay.setVisibility(visible ? View.GONE : View.VISIBLE);
             overlayToggle.setText(visible ? "TAMPILKAN GAMEPAD" : "SEMBUNYIKAN GAMEPAD");
-            if (!visible) gamepadOverlay.releaseAllInputs();
         });
 
         Button hudToggle = new Button(this);
@@ -297,9 +297,9 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         hudToggle.setMinHeight(dp(40));
         hudToggle.setMinimumHeight(dp(40));
         FrameLayout.LayoutParams hudParams = new FrameLayout.LayoutParams(
-                dp(58), dp(42), Gravity.BOTTOM | Gravity.END);
-        hudParams.bottomMargin = dp(10);
-        hudParams.rightMargin = dp(10);
+                dp(58), dp(42), Gravity.TOP | Gravity.END);
+        hudParams.topMargin = dp(4);
+        hudParams.rightMargin = dp(6);
         root.addView(hudToggle, hudParams);
         final boolean[] hudShown = {preferences.getBoolean("hud_visible", true)};
         Runnable applyHudVisibility = () -> {
