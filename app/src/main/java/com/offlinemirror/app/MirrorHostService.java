@@ -183,8 +183,11 @@ public class MirrorHostService extends Service {
         try {
             videoClientSocket = acceptAuthenticated(videoServerSocket, "video");
             videoClientSocket.setTcpNoDelay(true);
+            // Keep the TCP queue small so a slow Viewer does not accumulate seconds
+            // of obsolete screen frames. TCP still preserves H.264 packet order.
+            videoClientSocket.setSendBufferSize(64 * 1024);
             output = new DataOutputStream(new BufferedOutputStream(
-                    videoClientSocket.getOutputStream(), 256 * 1024));
+                    videoClientSocket.getOutputStream(), 8 * 1024));
 
             session = createInitialSession(maxDimension, fps, bitrate);
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
@@ -217,7 +220,7 @@ public class MirrorHostService extends Service {
                     continue;
                 }
 
-                int index = session.encoder.dequeueOutputBuffer(info, 150_000);
+                int index = session.encoder.dequeueOutputBuffer(info, 10_000);
                 if (index == MediaCodec.INFO_TRY_AGAIN_LATER) continue;
 
                 if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
