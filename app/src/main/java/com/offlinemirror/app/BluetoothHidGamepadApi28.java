@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.Process;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -130,7 +131,7 @@ public final class BluetoothHidGamepadApi28
 
     private void ensureReportThread() {
         if (reportThread != null && reportThread.isAlive()) return;
-        HandlerThread thread = new HandlerThread("OfflineMirror-HID-Reports");
+        HandlerThread thread = new HandlerThread("OfflineMirror-HID-Reports", Process.THREAD_PRIORITY_DISPLAY);
         thread.start();
         reportThread = thread;
         reportHandler = new Handler(thread.getLooper());
@@ -318,9 +319,10 @@ public final class BluetoothHidGamepadApi28
     }
 
     /**
-     * Coalesce rapid joystick MOVE events and send at most one HID report
-     * every 16 ms. Bluetooth Binder calls run off the UI thread, so they
-     * cannot stall drawing or the video Surface when touch events arrive fast.
+     * Send the newest HID state as soon as the report worker can process it.
+     * Multiple touch updates arriving before the worker runs are coalesced into
+     * one report, avoiding a stale FIFO queue while adding no fixed 16 ms delay.
+     * Bluetooth Binder calls stay off the UI thread and use display-thread priority.
      */
     private boolean sendLastReport() {
         if (!isConnected()) return false;
@@ -354,7 +356,7 @@ public final class BluetoothHidGamepadApi28
                 lastSentReport = null;
                 postStatus("Izin Bluetooth dicabut. Aktifkan ulang izin Bluetooth.");
             }
-        }, 16);
+        }, 0);
 
         if (!posted) {
             synchronized (reportLock) {
