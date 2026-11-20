@@ -288,7 +288,6 @@ public final class BluetoothHidGamepad {
                 reportHandler = null;
                 reportThread = null;
                 pendingReport = null;
-                latestButtons = 0;
                 lastQueuedButtons = -1;
             }
         }
