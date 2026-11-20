@@ -487,9 +487,7 @@ public class MainActivity extends Activity {
                     + NetworkAddress.getLocalIpv4(this) + "  •  Port Host: " + VIDEO_PORT);
         }
         if (statusText != null) {
-            setStatus(RemoteAccessibilityService.isEnabled()
-                    ? "Remote Touch aktif pada HP ini."
-                    : "Remote Touch belum aktif. Android 14 mungkin meminta Allow restricted settings terlebih dahulu.");
+            setStatus("Siap. Sambungkan kedua HP ke hotspot yang sama; masukkan IP Host pada Viewer.");
         }
     }
 
