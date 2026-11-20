@@ -541,6 +541,12 @@ public class MirrorHostService extends Service {
         format.setInteger(MediaFormat.KEY_BIT_RATE, Math.max(500_000, bitrate));
         format.setInteger(MediaFormat.KEY_FRAME_RATE, Math.max(10, Math.min(60, fps)));
         format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+        if (Build.VERSION.SDK_INT >= 26) {
+            format.setInteger(MediaFormat.KEY_LATENCY, 0);
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            format.setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0);
+        }
 
         MediaCodec encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
         try {
