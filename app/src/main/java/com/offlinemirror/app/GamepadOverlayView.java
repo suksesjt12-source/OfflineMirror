@@ -326,7 +326,7 @@ public final class GamepadOverlayView extends View {
     }
 
     private void emitState() {
-        invalidate();
+        postInvalidateOnAnimation();
         if (listener != null) listener.onGamepadState(buttons, axisX, axisY);
     }
 
