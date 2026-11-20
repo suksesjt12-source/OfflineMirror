@@ -8,10 +8,8 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.media.projection.MediaProjectionManager;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -22,7 +20,6 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -30,16 +27,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 
-import com.google.zxing.BarcodeFormat;
-import com.google.zxing.EncodeHintType;
-import com.google.zxing.MultiFormatWriter;
-import com.google.zxing.common.BitMatrix;
-import com.google.zxing.integration.android.IntentIntegrator;
-import com.google.zxing.integration.android.IntentResult;
-
-import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.UUID;
 
 public class MainActivity extends Activity {
@@ -56,7 +43,9 @@ public class MainActivity extends Activity {
     private EditText keyInput;
     private CheckBox audioCheck;
     private TextView hostAddress;
+    private TextView hostKeyText;
     private TextView statusText;
+    private CheckBox viewerAudioCheck;
     private Button connectButton;
     private String sessionKey = "";
 
@@ -136,15 +125,15 @@ public class MainActivity extends Activity {
         ipParams.topMargin = dp(8);
         page.addView(hostAddress, ipParams);
 
-        Button qrButton = makeButton("SHOW PAIRING QR", Color.rgb(35, 75, 125));
-        page.addView(qrButton, matchWrap());
-        qrButton.setOnClickListener(v -> {
-            if (sessionKey.isEmpty()) {
-                Toast.makeText(this, "Start sharing first to create a pairing code.", Toast.LENGTH_SHORT).show();
-            } else {
-                showPairingQr();
-            }
-        });
+        hostKeyText = new TextView(this);
+        hostKeyText.setText("Pairing key: belum aktif");
+        hostKeyText.setTextColor(Color.rgb(190, 205, 229));
+        hostKeyText.setTextSize(14);
+        hostKeyText.setTextIsSelectable(true);
+        hostKeyText.setPadding(dp(12), dp(12), dp(12), dp(12));
+        LinearLayout.LayoutParams keyParams = matchWrap();
+        keyParams.topMargin = dp(4);
+        page.addView(hostKeyText, keyParams);
 
         Button copyButton = makeButton("COPY HOST ADDRESS", Color.rgb(35, 48, 69));
         LinearLayout.LayoutParams copyParams = matchWrap();
@@ -155,6 +144,21 @@ public class MainActivity extends Activity {
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("OfflineMirror host", value));
             Toast.makeText(this, "Host address copied", Toast.LENGTH_SHORT).show();
+        });
+
+        Button copyKeyButton = makeButton("COPY PAIRING KEY", Color.rgb(35, 48, 69));
+        LinearLayout.LayoutParams copyKeyParams = matchWrap();
+        copyKeyParams.topMargin = dp(8);
+        page.addView(copyKeyButton, copyKeyParams);
+        copyKeyButton.setOnClickListener(v -> {
+            if (sessionKey.isEmpty()) {
+                Toast.makeText(this, "Start sharing terlebih dahulu.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("OfflineMirror pairing key", sessionKey));
+            Toast.makeText(this, "Pairing key disalin. Bagikan hanya ke Viewer yang dipercaya.",
+                    Toast.LENGTH_LONG).show();
         });
 
         Button accessibilityButton = makeButton("ENABLE REMOTE TOUCH ON THIS PHONE", Color.rgb(91, 72, 132));
@@ -178,20 +182,12 @@ public class MainActivity extends Activity {
         stopButton.setOnClickListener(v -> {
             stopService(new Intent(this, MirrorHostService.class));
             sessionKey = "";
-            setStatus("Sharing service stopped. The previous QR code is no longer valid.");
+            if (hostKeyText != null) hostKeyText.setText("Pairing key: tidak aktif");
+            setStatus("Sharing dihentikan. Pairing key sebelumnya sudah tidak berlaku.");
         });
 
         addDivider(page);
         addSectionTitle(page, "VIEWER MODE — CONNECT TO ANOTHER PHONE");
-        Button scanButton = makeButton("SCAN HOST QR CODE", Color.rgb(24, 139, 106));
-        page.addView(scanButton, matchWrap());
-        scanButton.setOnClickListener(v ->
-                new IntentIntegrator(this)
-                        .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
-                        .setPrompt("Scan the OfflineMirror QR shown on the Host phone")
-                        .setOrientationLocked(false)
-                        .initiateScan());
-
         addLabel(page, "Host IP address");
         addressInput = new EditText(this);
         styleInput(addressInput, "Example: 192.168.43.1");
@@ -199,11 +195,21 @@ public class MainActivity extends Activity {
                 android.text.InputType.TYPE_TEXT_VARIATION_URI);
         page.addView(addressInput, matchWrap());
 
-        addLabel(page, "Pairing key (filled automatically by QR)");
+        addLabel(page, "Pairing key dari HP Host");
         keyInput = new EditText(this);
-        styleInput(keyInput, "Scan QR or enter the pairing key");
+        styleInput(keyInput, "Masukkan pairing key dari HP Host");
         keyInput.setSingleLine(true);
         page.addView(keyInput, matchWrap());
+
+        viewerAudioCheck = new CheckBox(this);
+        viewerAudioCheck.setText("Terima audio dari Host (Android 10+)");
+        viewerAudioCheck.setTextColor(Color.rgb(196, 207, 224));
+        viewerAudioCheck.setTextSize(13);
+        viewerAudioCheck.setChecked(Build.VERSION.SDK_INT >= 29);
+        viewerAudioCheck.setEnabled(Build.VERSION.SDK_INT >= 29);
+        LinearLayout.LayoutParams viewerAudioParams = matchWrap();
+        viewerAudioParams.topMargin = dp(8);
+        page.addView(viewerAudioCheck, viewerAudioParams);
 
         connectButton = makeButton("CONNECT TO HOST", Color.rgb(24, 139, 106));
         LinearLayout.LayoutParams connectParams = matchWrap();
@@ -213,13 +219,13 @@ public class MainActivity extends Activity {
 
         statusText = new TextView(this);
         statusText.setTextColor(Color.rgb(159, 177, 203));
-        statusText.setText("Ready. Connect both phones to the same local Wi-Fi or hotspot.");
+        statusText.setText("Hubungkan kedua HP ke Wi-Fi/hotspot yang sama. Masukkan IP Host dan pairing key secara manual.");
         LinearLayout.LayoutParams statusParams = matchWrap();
         statusParams.topMargin = dp(20);
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("Remote touch requires the Host owner to enable the OfflineMirror Accessibility service. Audio playback capture requires Android 10+ and may be blocked by individual apps. Pair only with a person you trust on your local network.");
+        note.setText("Tanpa QR dan tanpa pemindaian kamera. Salin IP Host serta pairing key dari HP Host, lalu masukkan di Viewer. Remote touch memerlukan izin Accessibility dari pemilik Host. Audio capture memerlukan Android 10+ dan dapat diblokir oleh aplikasi tertentu.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
@@ -249,118 +255,29 @@ public class MainActivity extends Activity {
     private void connectToHost() {
         String host = addressInput.getText().toString().trim();
         String key = keyInput.getText().toString().trim();
+
         if (!NetworkAddress.isValidIpv4(host)) {
-            addressInput.setError("Masukkan IP lokal Host, atau scan QR pairing.");
+            addressInput.setError("Masukkan IP lokal Host yang benar.");
             return;
         }
         if (!isValidSessionKey(key)) {
-            keyInput.setError("Scan QR Host untuk mendapatkan pairing key yang valid.");
+            keyInput.setError("Masukkan pairing key dari HP Host.");
             return;
         }
-        launchViewer(host, key, Build.VERSION.SDK_INT >= 29, VIDEO_PORT, AUDIO_PORT, CONTROL_PORT);
-    }
 
-    private void launchViewer(String host, String key, boolean audio,
-                              int videoPort, int audioPort, int controlPort) {
         Intent viewer = new Intent(this, ViewerActivity.class);
         viewer.putExtra("host", host);
         viewer.putExtra("sessionKey", key);
-        viewer.putExtra("audioEnabled", audio);
-        viewer.putExtra("videoPort", videoPort);
-        viewer.putExtra("audioPort", audioPort);
-        viewer.putExtra("controlPort", controlPort);
+        viewer.putExtra("audioEnabled", viewerAudioCheck != null && viewerAudioCheck.isChecked());
+        viewer.putExtra("videoPort", VIDEO_PORT);
+        viewer.putExtra("audioPort", AUDIO_PORT);
+        viewer.putExtra("controlPort", CONTROL_PORT);
         startActivity(viewer);
     }
 
     private boolean isValidSessionKey(String key) {
         return key != null && key.length() >= 16 && key.length() <= 128
                 && key.matches("[A-Za-z0-9_-]+");
-    }
-
-    private int getQrPort(Uri uri, String name, int fallback) {
-        String value = uri.getQueryParameter(name);
-        if (value == null || value.trim().isEmpty()) return fallback;
-        int port = Integer.parseInt(value);
-        if (port < 1 || port > 65535) throw new IllegalArgumentException("Invalid " + name + " port.");
-        return port;
-    }
-
-    private void showPairingQr() {
-        String host = NetworkAddress.getLocalIpv4(this);
-        if (!NetworkAddress.isValidIpv4(host)) {
-            Toast.makeText(this, "IP Wi-Fi/Hotspot belum terdeteksi. Sambungkan ke jaringan yang sama.",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        boolean audio = audioCheck.isChecked() && Build.VERSION.SDK_INT >= 29;
-        String payload = new Uri.Builder()
-                .scheme("offlinemirror").authority("connect")
-                .appendQueryParameter("v", "2")
-                .appendQueryParameter("host", host)
-                .appendQueryParameter("device", Build.MODEL == null ? "Android" : Build.MODEL)
-                .appendQueryParameter("video", String.valueOf(VIDEO_PORT))
-                .appendQueryParameter("audio", String.valueOf(AUDIO_PORT))
-                .appendQueryParameter("control", String.valueOf(CONTROL_PORT))
-                .appendQueryParameter("audioEnabled", String.valueOf(audio))
-                .appendQueryParameter("key", sessionKey)
-                .build().toString();
-        try {
-            Map<EncodeHintType, Object> hints = new HashMap<>();
-            hints.put(EncodeHintType.MARGIN, 4);
-            hints.put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.M);
-            hints.put(EncodeHintType.CHARACTER_SET, "UTF-8");
-            BitMatrix matrix = new MultiFormatWriter().encode(payload, BarcodeFormat.QR_CODE, 800, 800, hints);
-            int[] pixels = new int[800 * 800];
-            for (int y = 0; y < 800; y++) {
-                for (int x = 0; x < 800; x++) pixels[y * 800 + x] = matrix.get(x, y) ? Color.BLACK : Color.WHITE;
-            }
-            Bitmap qr = Bitmap.createBitmap(pixels, 800, 800, Bitmap.Config.ARGB_8888);
-            ImageView image = new ImageView(this);
-            image.setImageBitmap(qr);
-            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            image.setBackgroundColor(Color.WHITE);
-            image.setPadding(dp(8), dp(8), dp(8), dp(8));
-            TextView details = new TextView(this);
-            details.setText("Perangkat Host: " + Build.MODEL
-                    + "\nIP Host: " + host + ":" + VIDEO_PORT
-                    + "\nIP Viewer ditampilkan di HP pemindai."
-                    + "\nKode pairing berlaku selama sesi ini. Jaga kerahasiaannya.");
-            details.setTextColor(Color.rgb(210, 218, 232));
-            details.setPadding(dp(12), dp(4), dp(12), dp(12));
-            LinearLayout content = new LinearLayout(this);
-            content.setOrientation(LinearLayout.VERTICAL);
-            content.setBackgroundColor(Color.rgb(18, 26, 40));
-            content.addView(image, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320)));
-            content.addView(details, matchWrap());
-            new AlertDialog.Builder(this).setTitle("QR Pairing OfflineMirror")
-                    .setView(content).setPositiveButton("Selesai", null).show();
-        } catch (Exception error) {
-            Toast.makeText(this, "QR tidak dapat dibuat: " + error.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private void handleScannedQr(String contents) {
-        try {
-            Uri uri = Uri.parse(contents == null ? "" : contents.trim());
-            if (!"offlinemirror".equalsIgnoreCase(uri.getScheme())
-                    || !"connect".equalsIgnoreCase(uri.getHost())) {
-                throw new IllegalArgumentException("QR ini bukan QR pairing OfflineMirror.");
-            }
-            String host = uri.getQueryParameter("host");
-            String key = uri.getQueryParameter("key");
-            if (!NetworkAddress.isValidIpv4(host)) throw new IllegalArgumentException("Alamat IP Host tidak valid.");
-            if (!isValidSessionKey(key)) throw new IllegalArgumentException("Pairing key tidak valid.");
-            int videoPort = getQrPort(uri, "video", VIDEO_PORT);
-            int audioPort = getQrPort(uri, "audio", AUDIO_PORT);
-            int controlPort = getQrPort(uri, "control", CONTROL_PORT);
-            boolean audio = Boolean.parseBoolean(uri.getQueryParameter("audioEnabled"));
-            addressInput.setText(host);
-            keyInput.setText(key);
-            Toast.makeText(this, "QR Host terdeteksi: " + host, Toast.LENGTH_SHORT).show();
-            launchViewer(host, key, audio, videoPort, audioPort, controlPort);
-        } catch (Exception error) {
-            Toast.makeText(this, "QR pairing gagal: " + error.getMessage(), Toast.LENGTH_LONG).show();
-        }
     }
 
     private void styleInput(EditText input, String hint) {
@@ -446,11 +363,6 @@ public class MainActivity extends Activity {
     @Override
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        IntentResult scanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
-        if (scanResult != null) {
-            if (scanResult.getContents() != null) handleScannedQr(scanResult.getContents());
-            return;
-        }
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQUEST_CAPTURE) return;
         if (resultCode != RESULT_OK || data == null) {
@@ -462,6 +374,7 @@ public class MainActivity extends Activity {
         int fps = new int[]{15, 24, 30}[fpsSpinner.getSelectedItemPosition()];
         int bitrate = new int[]{2, 4, 6}[bitrateSpinner.getSelectedItemPosition()] * 1_000_000;
         sessionKey = UUID.randomUUID().toString().replace("-", "");
+        if (hostKeyText != null) hostKeyText.setText("Pairing key: " + sessionKey);
 
         Intent service = new Intent(this, MirrorHostService.class);
         service.putExtra("resultCode", resultCode);
@@ -479,8 +392,7 @@ public class MainActivity extends Activity {
         }
         hostAddress.setText("Alamat HP ini (IP lokal): " + NetworkAddress.getLocalIpv4(this)
                 + "  •  Port Host: " + VIDEO_PORT);
-        setStatus("Host is starting. Show the pairing QR to connect a Viewer.");
-        showPairingQr();
+        setStatus("Host siap. Salin IP Host dan pairing key ke HP Viewer.");
     }
 
     @Override

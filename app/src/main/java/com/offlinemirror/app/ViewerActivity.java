@@ -420,7 +420,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         runOnUiThread(() -> {
             if (status != null) {
                 status.setText("HP ini (Viewer): " + viewerAddress
-                        + "   |   IP Host: " + host + "\n"
+                        + "   |   IP Host: " + host + "\\n"
                         + videoStatus + "  •  " + controlStatus + "  •  " + audioStatus);
             }
         });

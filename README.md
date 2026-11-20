@@ -1,54 +1,54 @@
-# OfflineMirror 1.3.0
+# OfflineMirror 1.4.0
 
-OfflineMirror mirrors a phone screen to another phone over the same local Wi-Fi network or hotspot. The application does not use a cloud server or require internet access after both devices are connected to the local network.
+OfflineMirror mirrors one Android phone to another over the same local Wi-Fi network or hotspot. It does not need a cloud server or internet access after both phones join the same local network.
 
-## New in version 1.3.0
+## Version 1.4.0
 
-- **QR pairing lebih andal:** payload QR berversi, divalidasi, membawa semua port layanan, dan memakai koreksi kesalahan QR.
-- **Alamat IP setiap HP:** Host menampilkan IP lokalnya; Viewer menampilkan IP Viewer dan IP Host secara terpisah. Router/hotspot yang memberikan alamat IP unik pada tiap perangkat.
-- **Koneksi lebih siap:** port video, audio, dan kontrol di-bind sebelum Viewer melakukan pemindaian QR. Opsi reuse diatur sebelum port di-bind.
-
-- **QR pairing:** the Host creates a QR code containing the local IP address, service ports, audio setting, and a random session key. The Viewer scans it with the camera.
-- **Remote touch:** tap, long-press, and swipe gestures on the Viewer can be sent to the Host. The Host owner must manually enable the OfflineMirror Remote Touch Accessibility service in Android Settings. The service does not retrieve window content; it only dispatches gestures received over the authenticated local session.
-- **Audio playback streaming:** optional device playback audio is captured on Android 10+ with Android's AudioPlaybackCapture API and played through the Viewer. The Host must grant the RECORD_AUDIO permission.
-- **Session authentication:** the video, audio, and touch sockets require the random key embedded in the Host's QR. A Viewer without the key is rejected.
-- **Automatic portrait/landscape orientation** remains supported.
-- 720p/1080p, 15/24/30 FPS, and 2/4/6 Mbps video settings remain available.
+- QR generation, QR scanning, camera-based pairing, and ZXing dependencies have been removed.
+- Manual pairing uses the Host's local IPv4 address and a random session key.
+- Host and Viewer show their own local IP addresses separately.
+- Video, optional playback audio, and remote touch remain supported.
+- Host prepares its video, audio, and control listening ports before accepting connections.
 
 ## Build the APK
 
-Open the Actions tab in this repository, select **Build OfflineMirror APK**, and run **Run workflow**. After the workflow succeeds, download the **OfflineMirror-debug-apk** artifact from its run summary. The APK is named app-debug.apk.
+Open the Actions tab, select **Build OfflineMirror APK**, and run **Run workflow**. After the workflow succeeds, download the **OfflineMirror-debug-apk** artifact. The APK is named `app-debug.apk`.
 
-## Use on two phones
+## Use on two phones without QR
 
-1. Install the same OfflineMirror version on both phones.
+1. Install OfflineMirror on both phones.
 2. Connect both phones to the same Wi-Fi network, or enable a hotspot on one phone and connect the second phone to it.
-3. On the Host phone, select video quality and frame rate. Leave audio enabled only when you want to share playback audio.
-4. Tap **START SCREEN SHARING** and approve Android's screen-capture permission. Grant RECORD_AUDIO if you want audio.
-5. Show the Host pairing QR. On the Viewer phone, tap **SCAN HOST QR CODE** and scan it.
-6. The Viewer opens the screen stream and attempts the audio and touch connections.
-7. For remote touch, the Host owner must open **ENABLE REMOTE TOUCH ON THIS PHONE**, go to Android Accessibility settings, and manually enable **OfflineMirror Remote Touch**. This permission is not enabled by the app automatically.
-8. Touch, swipe, or long-press within the Viewer area to send the gesture to the Host.
-9. Stop sharing from the Host app or its persistent notification. Stopping the session invalidates the current pairing key.
+3. On the Host, select video quality, frame rate, bitrate, and whether to share playback audio.
+4. Tap **START SCREEN SHARING** and approve Android's screen-capture permission. Grant RECORD_AUDIO if requested for audio.
+5. On the Host screen, note the **Host IP address** and tap **COPY PAIRING KEY**.
+6. On the Viewer, enter the Host IP in **Host IP address** and paste the copied key into **Pairing key from Host**. Enable audio reception if required, then tap **CONNECT TO HOST**.
+7. The Viewer displays its own local IP and the Host IP separately.
+8. For remote touch, the Host owner must tap **ENABLE REMOTE TOUCH ON THIS PHONE**, open Android Accessibility settings, and manually enable **OfflineMirror Remote Touch**.
+9. To end the session, tap **STOP SHARING** on the Host or stop the foreground service from its notification. The displayed session key is invalidated when sharing is stopped.
 
-## Important audio limitations
+## Address and pairing notes
 
-Android's playback capture API is available from Android 10 (API 29). Only playback from apps that permit capture can be received; apps may block capture for privacy or policy reasons. Protected media and some communication/system sounds may not be available. Audio streaming may not work on Android 8 or 9.
+- Each phone receives its own LAN address from the Wi-Fi router or hotspot. OfflineMirror detects and displays the address; it does not force or manually assign an IP.
+- Enter only the Host IP address, without the port number. The app uses its configured service ports automatically.
+- The session key is temporary. Share it only with the intended Viewer and do not post it publicly.
+- Both devices must be on the same reachable local network. Some guest Wi-Fi networks isolate connected clients and prevent mirroring.
+
+## Audio limitations
+
+Android playback capture is available from Android 10 (API 29). Only playback from apps that permit capture can be received; some apps block capture. Protected media and some communication/system sounds may not be available.
 
 ## Security and privacy
 
-- The QR contains a random session key. Treat it like a temporary access code and show it only to the intended Viewer.
-- The stream uses ordinary local TCP sockets, not TLS encryption. Use a trusted private hotspot or Wi-Fi network; do not expose these ports to public networks.
+- The video, audio, and control services require the random session key.
+- The stream uses ordinary local TCP sockets, not TLS encryption. Use a trusted private Wi-Fi network or hotspot; do not expose the ports to public networks.
 - The Host owner must approve screen capture and explicitly enable the Accessibility service before remote gestures can be injected.
-- Screen notifications and visible private information may appear on the Viewer. Do not mirror sensitive content.
-- Remote touch is limited to an active, explicitly paired OfflineMirror session. Disable the Accessibility service in Android Settings when you no longer need it.
+- Notifications and private information visible on the Host may appear on the Viewer. Avoid mirroring sensitive content.
 
 ## Current scope
 
 - One Host and one Viewer.
-- Video, optional system playback audio, QR pairing, and basic touch gestures.
-- No microphone streaming, keyboard text injection, file transfer, internet relay, or multi-viewer support.
-- Actual latency and supported audio depend on device hardware, Android version, local network quality, and the app being captured.
+- Video, optional device playback audio, manual IP/key pairing, and basic touch gestures.
+- No QR pairing, microphone streaming, keyboard text injection, file transfer, internet relay, or multi-viewer support.
 
 ## Platform
 
