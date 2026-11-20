@@ -14,7 +14,6 @@ import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.net.Uri;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -214,26 +213,6 @@ public class MainActivity extends Activity {
         page.addView(showQrButton, showQrParams);
         showQrButton.setOnClickListener(v -> showHostQr());
 
-        Button remoteControlButton = makeButton(
-                "ENABLE REMOTE CONTROL ON THIS HOST", Color.rgb(91, 72, 132));
-        LinearLayout.LayoutParams remoteParams = matchWrap();
-        remoteParams.topMargin = dp(8);
-        page.addView(remoteControlButton, remoteParams);
-        remoteControlButton.setOnClickListener(v -> {
-            new AlertDialog.Builder(this)
-                    .setTitle("Aktifkan Remote Control pada HP Host")
-                    .setMessage("Aktifkan layanan ini hanya pada HP yang menjadi Host. Setelah aktif, sentuhan dan tombol gamepad virtual dari Viewer dikirim melalui Wi-Fi lokal. Gamepad ini mensimulasikan sentuhan pada posisi kontrol bawaan, bukan membuat gamepad HID universal; game dengan tata letak berbeda atau yang mewajibkan controller fisik mungkin tidak merespons. Layanan hanya mengirim gesture dan tidak membaca isi layar. Android 13/14 mungkin meminta izin setelan terbatas untuk aplikasi yang dipasang dari APK.")
-                    .setNegativeButton("Nanti", null)
-                    .setNeutralButton("Info Aplikasi", (dialog, which) -> {
-                        Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                Uri.parse("package:" + getPackageName()));
-                        startActivity(details);
-                    })
-                    .setPositiveButton("Buka Aksesibilitas", (dialog, which) ->
-                            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
-                    .show();
-        });
-
         Button stopButton = makeButton("STOP SHARING", Color.rgb(151, 54, 66));
         LinearLayout.LayoutParams stopParams = matchWrap();
         stopParams.topMargin = dp(8);
@@ -291,7 +270,7 @@ public class MainActivity extends Activity {
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Gamepad virtual menggunakan Bluetooth HID saja (Android 9+ dan dukungan HID Device dari vendor; pair Viewer dan Host melalui Setelan Bluetooth). Wi-Fi dipakai untuk mirroring, tap, hold, swipe, volume, media, dan clipboard. Aktifkan Aksesibilitas Remote Touch pada Host. Kompatibilitas: Android 5.0+ untuk video, Android 7.0+ untuk sentuhan jarak jauh, Android 10+ untuk audio.");
+        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Input gamepad dan mouse dikirim melalui Bluetooth HID standar; pair Viewer dan Host dari Setelan Bluetooth. Gamepad memiliki D-pad, tombol, dua stick, dan trigger. Aktifkan tombol MOUSE di Viewer untuk trackpad serta klik kiri/kanan. Game/emulator Android yang mendukung controller/mouse dapat mengenalinya; pemetaan khusus tetap bergantung pada game/emulator. Wi-Fi hanya untuk mirroring, audio opsional, volume, media, dan clipboard. Bluetooth HID memerlukan Android 9+ serta dukungan profil HID Device dari firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
