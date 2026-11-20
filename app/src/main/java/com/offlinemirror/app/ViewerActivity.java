@@ -10,8 +10,6 @@ import android.graphics.RectF;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioTrack;
-import android.media.MediaCodec;
-import android.media.MediaFormat;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -29,7 +27,6 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.nio.ByteBuffer;
 
 public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private static final int VIDEO_PORT = 48888;
@@ -399,62 +396,6 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
             try { if (input != null) input.close(); } catch (Exception ignored) {}
             try { if (audioSocket != null) audioSocket.close(); } catch (Exception ignored) {}
         }
-    }
-
-    private StreamConfig readStreamHeader(DataInputStream input) throws Exception {
-        int magic = input.readInt();
-        if (magic != MAGIC) throw new IllegalStateException("Unsupported stream header");
-        int width = input.readInt();
-        int height = input.readInt();
-        if (width < 2 || height < 2 || width > 4096 || height > 4096) {
-            throw new IllegalStateException("Invalid video dimensions");
-        }
-        byte[] csd0 = readConfig(input);
-        byte[] csd1 = readConfig(input);
-        // Some hardware encoders send SPS/PPS as a separate codec-config buffer.
-        // The decoder accepts that buffer after it has been configured.
-        return new StreamConfig(width, height, csd0, csd1);
-    }
-
-    private MediaCodec createDecoder(StreamConfig config, Surface surface) throws Exception {
-        MediaFormat format = MediaFormat.createVideoFormat(
-                MediaFormat.MIMETYPE_VIDEO_AVC, config.width, config.height);
-        if (config.csd0.length > 0) format.setByteBuffer("csd-0", ByteBuffer.wrap(config.csd0));
-        if (config.csd1.length > 0) format.setByteBuffer("csd-1", ByteBuffer.wrap(config.csd1));
-        if (surface == null || !surface.isValid()) {
-            throw new IllegalStateException("Layar Viewer belum siap");
-        }
-        MediaCodec decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
-        try {
-            decoder.configure(format, surface, null, 0);
-            decoder.start();
-            android.util.Log.i("OfflineMirror", "AVC decoder ready: "
-                    + config.width + "x" + config.height
-                    + " csd0=" + config.csd0.length + " csd1=" + config.csd1.length);
-            return decoder;
-        } catch (Exception error) {
-            try { decoder.release(); } catch (Exception ignored) {}
-            throw new IllegalStateException("Decoder H.264 gagal untuk "
-                    + config.width + "x" + config.height + ": " + error.getMessage(), error);
-        }
-    }
-
-    private MediaCodec releaseDecoder(MediaCodec decoder) {
-        if (decoder != null) {
-            try { decoder.stop(); } catch (Exception ignored) {}
-            try { decoder.release(); } catch (Exception ignored) {}
-        }
-        return null;
-    }
-
-    private byte[] readConfig(DataInputStream input) throws Exception {
-        int size = input.readInt();
-        if (size < 0 || size > 1024 * 1024) {
-            throw new IllegalStateException("Invalid codec configuration");
-        }
-        byte[] bytes = new byte[size];
-        input.readFully(bytes);
-        return bytes;
     }
 
     private float clamp(float value) {
