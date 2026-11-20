@@ -22,12 +22,8 @@ import java.util.concurrent.Executor;
  * This makes the Viewer phone appear as a real standard game controller to
  * the Host phone. The mirror itself remains on the local Wi-Fi connection.
  */
-public final class BluetoothHidGamepadApi28 implements BluetoothProfile.ServiceListener {
-    public interface Listener {
-        void onStatus(String status);
-    }
-
-    public static final int REQUEST_DISCOVERABLE = 7381;
+public final class BluetoothHidGamepadApi28
+        implements GamepadController, BluetoothProfile.ServiceListener {
     private static final int REPORT_ID = 1;
 
     // 16 buttons plus four signed 8-bit axes (X, Y, Rx, Ry).
@@ -58,7 +54,7 @@ public final class BluetoothHidGamepadApi28 implements BluetoothProfile.ServiceL
     };
 
     private final Activity activity;
-    private final Listener listener;
+    private final GamepadController.Listener listener;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Executor callbackExecutor = command -> mainHandler.post(command);
 
@@ -70,7 +66,7 @@ public final class BluetoothHidGamepadApi28 implements BluetoothProfile.ServiceL
     private boolean discoverableRequested;
     private byte[] lastReport = new byte[] {0, 0, 0, 0, 0, 0};
 
-    public BluetoothHidGamepadApi28(Activity activity, Listener listener) {
+    public BluetoothHidGamepadApi28(Activity activity, GamepadController.Listener listener) {
         this.activity = activity;
         this.listener = listener;
     }
@@ -212,6 +208,7 @@ public final class BluetoothHidGamepadApi28 implements BluetoothProfile.ServiceL
         });
     }
 
+    @Override
     public List<BluetoothDevice> getBondedDevices() {
         List<BluetoothDevice> devices = new ArrayList<>();
         if (adapter == null) adapter = BluetoothAdapter.getDefaultAdapter();
@@ -225,6 +222,7 @@ public final class BluetoothHidGamepadApi28 implements BluetoothProfile.ServiceL
         return devices;
     }
 
+    @Override
     public void connect(BluetoothDevice device) {
         if (hid == null || !registered || device == null) {
             postStatus("Gamepad belum terdaftar. Aktifkan Bluetooth Gamepad dahulu.");
@@ -241,14 +239,17 @@ public final class BluetoothHidGamepadApi28 implements BluetoothProfile.ServiceL
         }
     }
 
+    @Override
     public boolean isRegistered() {
         return registered && hid != null;
     }
 
+    @Override
     public boolean isConnected() {
         return isRegistered() && connectedDevice != null;
     }
 
+    @Override
     public boolean sendState(int buttons, float leftX, float leftY) {
         lastReport = new byte[] {
                 (byte) (buttons & 0xFF),
@@ -296,6 +297,7 @@ public final class BluetoothHidGamepadApi28 implements BluetoothProfile.ServiceL
         });
     }
 
+    @Override
     public void close() {
         if (hid != null) {
             try {
