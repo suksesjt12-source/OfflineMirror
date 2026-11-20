@@ -42,12 +42,20 @@ public class RemoteAccessibilityService extends AccessibilityService {
 
     public static void dispatchRemoteGesture(int type, float x1, float y1,
                                              float x2, float y2, int durationMs) {
-        // dispatchGesture() was introduced in Android 7.0 (API 24).
+        // The gesture injection API is only available starting with Android 7.0.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
         RemoteAccessibilityService service = instance;
         if (service == null) return;
+        service.mainHandler.post(() ->
+                Api24GestureDispatcher.dispatch(service, type, x1, y1, x2, y2, durationMs));
+    }
 
-        service.mainHandler.post(() -> {
+    /**
+     * Kept in a separate class so Android 5/6 do not need to load API-24 classes.
+     */
+    private static final class Api24GestureDispatcher {
+        static void dispatch(RemoteAccessibilityService service, int type,
+                             float x1, float y1, float x2, float y2, int durationMs) {
             DisplayMetrics metrics = new DisplayMetrics();
             WindowManager wm = (WindowManager) service.getSystemService(WINDOW_SERVICE);
             Display display = wm.getDefaultDisplay();
@@ -73,7 +81,7 @@ public class RemoteAccessibilityService extends AccessibilityService {
                             path, 0, gestureDuration))
                     .build();
             service.dispatchGesture(gesture, null, null);
-        });
+        }
     }
 
     private static float clamp(float value) {
