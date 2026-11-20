@@ -2,10 +2,14 @@ package com.offlinemirror.app;
 
 import android.app.Activity;
 import android.graphics.Color;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
+import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -15,21 +19,39 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 
 public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
-    private static final int PORT = 48888;
+    private static final int VIDEO_PORT = 48888;
+    private static final int AUDIO_PORT = 48889;
+    private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
 
     private SurfaceView surfaceView;
     private TextView status;
     private String host;
+    private String sessionKey;
+    private boolean audioEnabled;
     private volatile boolean running = false;
-    private Socket socket;
+    private volatile Socket videoSocket;
+    private volatile Socket audioSocket;
+    private volatile Socket controlSocket;
+    private volatile DataOutputStream controlOutput;
     private Thread receiveThread;
+    private Thread audioThread;
+
+    private float touchDownX;
+    private float touchDownY;
+    private long touchDownTime;
+
+    private volatile String videoStatus = "Connecting";
+    private volatile String audioStatus = "Audio: waiting";
+    private volatile String controlStatus = "Touch: connecting";
 
     private int dp(float value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
@@ -39,6 +61,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         host = getIntent().getStringExtra("host");
+        sessionKey = getIntent().getStringExtra("sessionKey");
+        audioEnabled = getIntent().getBooleanExtra("audioEnabled", false);
         getWindow().setStatusBarColor(Color.BLACK);
         getWindow().setNavigationBarColor(Color.BLACK);
         enableImmersiveViewer();
@@ -48,20 +72,21 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         root.setBackgroundColor(Color.BLACK);
 
         status = new TextView(this);
-        status.setText("Connecting to " + host + ":" + PORT + " …");
         status.setTextColor(Color.WHITE);
-        status.setTextSize(13);
+        status.setTextSize(12);
         status.setGravity(Gravity.CENTER_VERTICAL);
-        status.setPadding(dp(14), dp(6), dp(14), dp(6));
+        status.setPadding(dp(12), dp(5), dp(12), dp(5));
         root.addView(status, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
 
         surfaceView = new SurfaceView(this);
         surfaceView.setBackgroundColor(Color.BLACK);
         root.addView(surfaceView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         surfaceView.getHolder().addCallback(this);
+        surfaceView.setOnTouchListener(this::handleViewerTouch);
         setContentView(root);
+        updateStatus();
     }
 
     private void enableImmersiveViewer() {
@@ -99,25 +124,37 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         MediaCodec decoder = null;
         DataInputStream input = null;
         try {
-            socket = new Socket();
-            socket.setTcpNoDelay(true);
-            socket.connect(new InetSocketAddress(host, PORT), 10_000);
-            input = new DataInputStream(new BufferedInputStream(socket.getInputStream(), 256 * 1024));
+            videoSocket = new Socket();
+            videoSocket.setTcpNoDelay(true);
+            videoSocket.connect(new InetSocketAddress(host, VIDEO_PORT), 10_000);
+
+            DataOutputStream authOutput = new DataOutputStream(
+                    new BufferedOutputStream(videoSocket.getOutputStream()));
+            authOutput.writeUTF(sessionKey);
+            authOutput.flush();
+            input = new DataInputStream(
+                    new BufferedInputStream(videoSocket.getInputStream(), 256 * 1024));
+            if (!input.readBoolean()) throw new SecurityException("Pairing key rejected by Host");
 
             StreamConfig config = readStreamHeader(input);
             decoder = createDecoder(config, surface);
-            updateStatus("Connected • " + config.width + " × " + config.height + " • H.264");
+            videoStatus = "Video " + config.width + " × " + config.height;
+            updateStatus();
+
+            connectControl();
+            if (audioEnabled) startAudioPlayback();
 
             MediaCodec.BufferInfo outputInfo = new MediaCodec.BufferInfo();
             while (running) {
                 int size = input.readInt();
 
-                // The host sends -1 before a new codec header when its screen rotates.
+                // The Host sends -1 and a new header after changing screen orientation.
                 if (size == -1) {
                     decoder = releaseDecoder(decoder);
                     config = readStreamHeader(input);
                     decoder = createDecoder(config, surface);
-                    updateStatus("Orientation updated • " + config.width + " × " + config.height);
+                    videoStatus = "Video " + config.width + " × " + config.height + " • rotated";
+                    updateStatus();
                     continue;
                 }
 
@@ -155,12 +192,172 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 } while (outputIndex >= 0 && running);
             }
         } catch (Exception error) {
-            if (running) updateStatus("Connection ended: " + error.getMessage());
+            if (running) {
+                videoStatus = "Video stopped: " + error.getMessage();
+                updateStatus();
+            }
         } finally {
             running = false;
             try { if (input != null) input.close(); } catch (Exception ignored) {}
-            try { if (socket != null) socket.close(); } catch (Exception ignored) {}
+            try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
             releaseDecoder(decoder);
+            closeAuxiliaryConnections();
+        }
+    }
+
+    private void connectControl() {
+        try {
+            controlSocket = new Socket();
+            controlSocket.setTcpNoDelay(true);
+            controlSocket.connect(new InetSocketAddress(host, CONTROL_PORT), 8_000);
+            DataOutputStream output = new DataOutputStream(
+                    new BufferedOutputStream(controlSocket.getOutputStream()));
+            DataInputStream input = new DataInputStream(
+                    new BufferedInputStream(controlSocket.getInputStream()));
+            output.writeUTF(sessionKey);
+            output.flush();
+            if (!input.readBoolean()) throw new SecurityException("Remote touch pairing rejected");
+            controlOutput = output;
+            controlStatus = "Touch: ready";
+        } catch (Exception error) {
+            controlStatus = "Touch unavailable";
+        }
+        updateStatus();
+    }
+
+    private boolean handleViewerTouch(View view, MotionEvent event) {
+        if (event.getAction() == MotionEvent.ACTION_DOWN) {
+            touchDownX = event.getX();
+            touchDownY = event.getY();
+            touchDownTime = event.getEventTime();
+            return true;
+        }
+        if (event.getAction() == MotionEvent.ACTION_UP) {
+            float upX = event.getX();
+            float upY = event.getY();
+            long duration = Math.max(1, event.getEventTime() - touchDownTime);
+            float width = Math.max(1f, view.getWidth());
+            float height = Math.max(1f, view.getHeight());
+            float x1 = clamp(touchDownX / width);
+            float y1 = clamp(touchDownY / height);
+            float x2 = clamp(upX / width);
+            float y2 = clamp(upY / height);
+            float distance = (float) Math.hypot(upX - touchDownX, upY - touchDownY);
+
+            if (duration >= 500 && distance < dp(20)) {
+                sendTouchCommand(2, x1, y1, x1, y1, (int) duration);
+            } else if (distance >= dp(20)) {
+                sendTouchCommand(3, x1, y1, x2, y2, (int) duration);
+            } else {
+                sendTouchCommand(1, x1, y1, x1, y1, 90);
+            }
+            return true;
+        }
+        return true;
+    }
+
+    private void sendTouchCommand(int type, float x1, float y1,
+                                  float x2, float y2, int duration) {
+        DataOutputStream output = controlOutput;
+        if (output == null) return;
+        try {
+            synchronized (output) {
+                output.writeByte(type);
+                output.writeFloat(x1);
+                output.writeFloat(y1);
+                if (type == 3) {
+                    output.writeFloat(x2);
+                    output.writeFloat(y2);
+                }
+                output.writeInt(Math.max(60, Math.min(1200, duration)));
+                output.flush();
+            }
+        } catch (Exception error) {
+            controlStatus = "Touch disconnected";
+            controlOutput = null;
+            updateStatus();
+        }
+    }
+
+    private void startAudioPlayback() {
+        if (audioThread != null && audioThread.isAlive()) return;
+        audioThread = new Thread(this::receiveAudio, "OfflineMirror-Audio-Player");
+        audioThread.start();
+    }
+
+    private void receiveAudio() {
+        AudioTrack track = null;
+        DataInputStream input = null;
+        try {
+            audioSocket = new Socket();
+            audioSocket.setTcpNoDelay(true);
+            audioSocket.connect(new InetSocketAddress(host, AUDIO_PORT), 12_000);
+
+            DataOutputStream authOutput = new DataOutputStream(
+                    new BufferedOutputStream(audioSocket.getOutputStream()));
+            authOutput.writeUTF(sessionKey);
+            authOutput.flush();
+
+            input = new DataInputStream(new BufferedInputStream(audioSocket.getInputStream(), 32 * 1024));
+            if (!input.readBoolean()) throw new SecurityException("Audio pairing key rejected");
+
+            int sampleRate = input.readInt();
+            int channels = input.readInt();
+            int encoding = input.readInt();
+            int channelMask = channels == 1
+                    ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
+            int minBuffer = AudioTrack.getMinBufferSize(
+                    sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT);
+            int bufferSize = Math.max(8192, minBuffer > 0 ? minBuffer * 2 : 16384);
+
+            track = new AudioTrack.Builder()
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build())
+                    .setAudioFormat(new AudioFormat.Builder()
+                            .setEncoding(encoding)
+                            .setSampleRate(sampleRate)
+                            .setChannelMask(channelMask)
+                            .build())
+                    .setBufferSizeInBytes(bufferSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build();
+
+            if (track.getState() != AudioTrack.STATE_INITIALIZED) {
+                throw new IllegalStateException("Audio output could not initialize");
+            }
+            track.play();
+            audioStatus = "Audio: connected";
+            updateStatus();
+
+            while (running) {
+                int count = input.readInt();
+                if (count <= 0 || count > 65536) {
+                    throw new IllegalStateException("Invalid audio packet");
+                }
+                byte[] pcm = new byte[count];
+                input.readFully(pcm);
+                int offset = 0;
+                while (offset < count && running) {
+                    int written = track.write(pcm, offset, count - offset, AudioTrack.WRITE_BLOCKING);
+                    if (written < 0) throw new IllegalStateException("Audio output stopped");
+                    offset += written;
+                }
+            }
+        } catch (Exception error) {
+            if (running) {
+                audioStatus = "Audio unavailable";
+                updateStatus();
+            }
+        } finally {
+            if (track != null) {
+                try { track.pause(); } catch (Exception ignored) {}
+                try { track.flush(); } catch (Exception ignored) {}
+                try { track.release(); } catch (Exception ignored) {}
+            }
+            try { if (input != null) input.close(); } catch (Exception ignored) {}
+            try { if (audioSocket != null) audioSocket.close(); } catch (Exception ignored) {}
         }
     }
 
@@ -180,12 +377,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private MediaCodec createDecoder(StreamConfig config, Surface surface) throws Exception {
         MediaFormat format = MediaFormat.createVideoFormat(
                 MediaFormat.MIMETYPE_VIDEO_AVC, config.width, config.height);
-        if (config.csd0.length > 0) {
-            format.setByteBuffer("csd-0", ByteBuffer.wrap(config.csd0));
-        }
-        if (config.csd1.length > 0) {
-            format.setByteBuffer("csd-1", ByteBuffer.wrap(config.csd1));
-        }
+        if (config.csd0.length > 0) format.setByteBuffer("csd-0", ByteBuffer.wrap(config.csd0));
+        if (config.csd1.length > 0) format.setByteBuffer("csd-1", ByteBuffer.wrap(config.csd1));
         MediaCodec decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
         decoder.configure(format, surface, null, 0);
         decoder.start();
@@ -210,15 +403,28 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         return bytes;
     }
 
-    private void updateStatus(String message) {
+    private float clamp(float value) {
+        return Math.max(0f, Math.min(1f, value));
+    }
+
+    private void updateStatus() {
         runOnUiThread(() -> {
-            if (status != null) status.setText(message);
+            if (status != null) {
+                status.setText(videoStatus + "  •  " + controlStatus + "  •  " + audioStatus);
+            }
         });
+    }
+
+    private void closeAuxiliaryConnections() {
+        try { if (audioSocket != null) audioSocket.close(); } catch (Exception ignored) {}
+        try { if (controlSocket != null) controlSocket.close(); } catch (Exception ignored) {}
+        controlOutput = null;
     }
 
     private void stopReceiving() {
         running = false;
-        try { if (socket != null) socket.close(); } catch (Exception ignored) {}
+        try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
+        closeAuxiliaryConnections();
     }
 
     @Override
