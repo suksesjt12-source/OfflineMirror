@@ -17,6 +17,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.util.DisplayMetrics;
+import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManager;
 
@@ -31,6 +32,7 @@ public class MirrorHostService extends Service {
     private static final int NOTIFICATION_ID = 71;
     private static final int PORT = 48888;
     private static final int MAGIC = 0x4F4D4952; // OMIR
+    private static final int ROTATION_CHECK_MS = 150;
 
     private volatile boolean running = false;
     private ServerSocket serverSocket;
@@ -110,10 +112,9 @@ public class MirrorHostService extends Service {
     }
 
     private void streamScreen(int maxDimension, int fps, int bitrate) {
-        MediaCodec encoder = null;
-        VirtualDisplay virtualDisplay = null;
-        Surface inputSurface = null;
+        EncoderSession session = null;
         DataOutputStream output = null;
+        boolean streamHeaderSent = false;
 
         try {
             serverSocket = new ServerSocket(PORT);
@@ -123,64 +124,40 @@ public class MirrorHostService extends Service {
             output = new DataOutputStream(new BufferedOutputStream(
                     clientSocket.getOutputStream(), 256 * 1024));
 
-            DisplayMetrics metrics = new DisplayMetrics();
-            WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
-            wm.getDefaultDisplay().getRealMetrics(metrics);
-            int sourceWidth = Math.max(2, metrics.widthPixels);
-            int sourceHeight = Math.max(2, metrics.heightPixels);
-            float scale = Math.min(1f, (float) maxDimension /
-                    (float) Math.max(sourceWidth, sourceHeight));
-            int width = even((int) (sourceWidth * scale));
-            int height = even((int) (sourceHeight * scale));
-
-            MediaFormat format = MediaFormat.createVideoFormat(
-                    MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
-            format.setInteger(MediaFormat.KEY_COLOR_FORMAT,
-                    MediaCodecInfoCompat.COLOR_FORMAT_SURFACE);
-            format.setInteger(MediaFormat.KEY_BIT_RATE, Math.max(500_000, bitrate));
-            format.setInteger(MediaFormat.KEY_FRAME_RATE, Math.max(10, Math.min(60, fps)));
-            format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2);
-
-            encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
-            encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-            inputSurface = encoder.createInputSurface();
-
-            int density = metrics.densityDpi;
-            virtualDisplay = projection.createVirtualDisplay(
-                    "OfflineMirror", width, height, density,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    inputSurface, null, null);
-            encoder.start();
-
+            session = createEncoderSession(maxDimension, fps, bitrate, false);
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            boolean headerSent = false;
 
-            while (running && !clientSocket.isClosed()) {
-                int index = encoder.dequeueOutputBuffer(info, 10_000);
+            while (running && clientSocket != null && !clientSocket.isClosed()) {
+                // Recreate the encoder when the physical display changes between portrait/landscape.
+                int currentRotation = getDisplayRotation();
+                if (currentRotation != session.rotation) {
+                    session.release();
+                    session = createEncoderSession(maxDimension, fps, bitrate, true);
+                    continue;
+                }
+
+                int index = session.encoder.dequeueOutputBuffer(info, ROTATION_CHECK_MS * 1000L);
                 if (index == MediaCodec.INFO_TRY_AGAIN_LATER) {
                     continue;
                 }
+
                 if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    MediaFormat outputFormat = encoder.getOutputFormat();
+                    MediaFormat outputFormat = session.encoder.getOutputFormat();
                     byte[] csd0 = copyBuffer(outputFormat.getByteBuffer("csd-0"));
                     byte[] csd1 = copyBuffer(outputFormat.getByteBuffer("csd-1"));
-                    output.writeInt(MAGIC);
-                    output.writeInt(width);
-                    output.writeInt(height);
-                    output.writeInt(csd0.length);
-                    output.write(csd0);
-                    output.writeInt(csd1.length);
-                    output.write(csd1);
-                    output.flush();
-                    headerSent = true;
+
+                    // -1 means that the viewer must rebuild its decoder with the following header.
+                    if (streamHeaderSent) output.writeInt(-1);
+                    writeStreamHeader(output, session.width, session.height, csd0, csd1);
+                    streamHeaderSent = true;
                     continue;
                 }
                 if (index < 0) continue;
 
                 try {
-                    if (headerSent && info.size > 0 &&
+                    if (streamHeaderSent && info.size > 0 &&
                             (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                        ByteBuffer encoded = encoder.getOutputBuffer(index);
+                        ByteBuffer encoded = session.encoder.getOutputBuffer(index);
                         if (encoded != null) {
                             encoded.position(info.offset);
                             encoded.limit(info.offset + info.size);
@@ -195,25 +172,79 @@ public class MirrorHostService extends Service {
                     }
                     if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break;
                 } finally {
-                    encoder.releaseOutputBuffer(index, false);
+                    session.encoder.releaseOutputBuffer(index, false);
                 }
             }
         } catch (Exception error) {
-            android.util.Log.e("OfflineMirror", "Stream stopped: " + error.getMessage(), error);
+            if (running) {
+                android.util.Log.e("OfflineMirror", "Stream stopped: " + error.getMessage(), error);
+            }
         } finally {
             running = false;
             closeSockets();
-            if (virtualDisplay != null) virtualDisplay.release();
-            if (encoder != null) {
-                try { encoder.stop(); } catch (Exception ignored) {}
-                try { encoder.release(); } catch (Exception ignored) {}
-            }
-            if (inputSurface != null) inputSurface.release();
+            if (session != null) session.release();
             if (output != null) {
                 try { output.close(); } catch (Exception ignored) {}
             }
             stopSelf();
         }
+    }
+
+    private EncoderSession createEncoderSession(int maxDimension, int fps,
+                                                int bitrate, boolean reconfigure) throws Exception {
+        DisplayMetrics metrics = new DisplayMetrics();
+        WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        Display display = wm.getDefaultDisplay();
+        display.getRealMetrics(metrics);
+
+        int sourceWidth = Math.max(2, metrics.widthPixels);
+        int sourceHeight = Math.max(2, metrics.heightPixels);
+        float scale = Math.min(1f, (float) maxDimension /
+                (float) Math.max(sourceWidth, sourceHeight));
+        int width = even((int) (sourceWidth * scale));
+        int height = even((int) (sourceHeight * scale));
+
+        MediaFormat format = MediaFormat.createVideoFormat(
+                MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
+        format.setInteger(MediaFormat.KEY_COLOR_FORMAT, 0x7F000789);
+        format.setInteger(MediaFormat.KEY_BIT_RATE, Math.max(500_000, bitrate));
+        format.setInteger(MediaFormat.KEY_FRAME_RATE, Math.max(10, Math.min(60, fps)));
+        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+
+        MediaCodec encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+        encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+        Surface surface = encoder.createInputSurface();
+
+        VirtualDisplay virtualDisplay = projection.createVirtualDisplay(
+                "OfflineMirror", width, height, metrics.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                surface, null, null);
+        if (virtualDisplay == null) {
+            surface.release();
+            encoder.release();
+            throw new IllegalStateException("Unable to create virtual display");
+        }
+
+        encoder.start();
+        return new EncoderSession(encoder, virtualDisplay, surface,
+                width, height, display.getRotation(), reconfigure);
+    }
+
+    private void writeStreamHeader(DataOutputStream output, int width, int height,
+                                   byte[] csd0, byte[] csd1) throws Exception {
+        output.writeInt(MAGIC);
+        output.writeInt(width);
+        output.writeInt(height);
+        output.writeInt(csd0.length);
+        output.write(csd0);
+        output.writeInt(csd1.length);
+        output.write(csd1);
+        output.flush();
+    }
+
+    private int getDisplayRotation() {
+        WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        return wm.getDefaultDisplay().getRotation();
     }
 
     private int even(int value) {
@@ -277,7 +308,7 @@ public class MirrorHostService extends Service {
         }
         return builder
                 .setContentTitle("OfflineMirror is sharing")
-                .setContentText("Waiting for a viewer on local Wi-Fi • port " + PORT)
+                .setContentText("Local mirroring • auto portrait/landscape • port " + PORT)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setOngoing(true)
                 .addAction(android.R.drawable.ic_media_pause, "Stop", stopPending)
@@ -295,7 +326,31 @@ public class MirrorHostService extends Service {
         return null;
     }
 
-    private static final class MediaCodecInfoCompat {
-        static final int COLOR_FORMAT_SURFACE = 0x7F000789;
+    private static final class EncoderSession {
+        final MediaCodec encoder;
+        final VirtualDisplay virtualDisplay;
+        final Surface surface;
+        final int width;
+        final int height;
+        final int rotation;
+        final boolean reconfigure;
+
+        EncoderSession(MediaCodec encoder, VirtualDisplay virtualDisplay, Surface surface,
+                       int width, int height, int rotation, boolean reconfigure) {
+            this.encoder = encoder;
+            this.virtualDisplay = virtualDisplay;
+            this.surface = surface;
+            this.width = width;
+            this.height = height;
+            this.rotation = rotation;
+            this.reconfigure = reconfigure;
+        }
+
+        void release() {
+            try { virtualDisplay.release(); } catch (Exception ignored) {}
+            try { encoder.stop(); } catch (Exception ignored) {}
+            try { encoder.release(); } catch (Exception ignored) {}
+            try { surface.release(); } catch (Exception ignored) {}
+        }
     }
 }
