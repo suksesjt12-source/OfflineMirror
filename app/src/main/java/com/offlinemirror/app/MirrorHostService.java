@@ -9,6 +9,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.media.projection.MediaProjection;
@@ -21,7 +24,9 @@ import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManager;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -30,15 +35,28 @@ import java.nio.ByteBuffer;
 public class MirrorHostService extends Service {
     private static final String CHANNEL_ID = "offline_mirror_stream";
     private static final int NOTIFICATION_ID = 71;
-    private static final int PORT = 48888;
+    private static final int VIDEO_PORT = 48888;
+    private static final int AUDIO_PORT = 48889;
+    private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
 
     private volatile boolean running = false;
-    private ServerSocket serverSocket;
-    private Socket clientSocket;
+    private volatile String sessionKey = "";
+    private boolean audioEnabled = false;
+
+    private ServerSocket videoServerSocket;
+    private ServerSocket audioServerSocket;
+    private ServerSocket controlServerSocket;
+    private Socket videoClientSocket;
+    private Socket audioClientSocket;
+    private Socket controlClientSocket;
+
     private MediaProjection projection;
     private MediaProjection.Callback projectionCallback;
-    private Thread streamThread;
+    private Thread videoThread;
+    private Thread audioThread;
+    private Thread controlThread;
+    private AudioRecord audioRecord;
 
     @Override
     public void onCreate() {
@@ -57,7 +75,9 @@ public class MirrorHostService extends Service {
 
         int resultCode = intent.getIntExtra("resultCode", 0);
         Intent projectionData = getProjectionData(intent);
-        if (projectionData == null || resultCode == 0) {
+        sessionKey = intent.getStringExtra("sessionKey");
+        audioEnabled = intent.getBooleanExtra("audioEnabled", false);
+        if (projectionData == null || resultCode == 0 || sessionKey == null || sessionKey.length() < 16) {
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -92,10 +112,19 @@ public class MirrorHostService extends Service {
             int maxDimension = intent.getIntExtra("maxDimension", 1280);
             int fps = intent.getIntExtra("fps", 30);
             int bitrate = intent.getIntExtra("bitrate", 4_000_000);
-            streamThread = new Thread(() -> streamScreen(maxDimension, fps, bitrate),
-                    "OfflineMirror-Encoder");
-            streamThread.start();
+
+            videoThread = new Thread(() -> streamVideo(maxDimension, fps, bitrate),
+                    "OfflineMirror-Video");
+            controlThread = new Thread(this::serveControl, "OfflineMirror-Control");
+            videoThread.start();
+            controlThread.start();
+
+            if (audioEnabled && Build.VERSION.SDK_INT >= 29) {
+                audioThread = new Thread(this::serveAudio, "OfflineMirror-Audio");
+                audioThread.start();
+            }
         } catch (Exception error) {
+            android.util.Log.e("OfflineMirror", "Could not start Host", error);
             stopStreaming();
             stopSelf();
         }
@@ -110,27 +139,28 @@ public class MirrorHostService extends Service {
         return source.getParcelableExtra("projectionData");
     }
 
-    private void streamScreen(int maxDimension, int fps, int bitrate) {
+    private void streamVideo(int maxDimension, int fps, int bitrate) {
         EncoderSession session = null;
         DataOutputStream output = null;
         boolean streamHeaderSent = false;
 
         try {
-            serverSocket = new ServerSocket(PORT);
-            serverSocket.setReuseAddress(true);
-            clientSocket = serverSocket.accept();
-            clientSocket.setTcpNoDelay(true);
+            videoServerSocket = new ServerSocket(VIDEO_PORT);
+            videoServerSocket.setReuseAddress(true);
+            videoClientSocket = videoServerSocket.accept();
+            videoClientSocket.setTcpNoDelay(true);
             output = new DataOutputStream(new BufferedOutputStream(
-                    clientSocket.getOutputStream(), 256 * 1024));
+                    videoClientSocket.getOutputStream(), 256 * 1024));
+
+            DataInputStream authInput = authenticate(videoClientSocket, output);
+            if (authInput == null) throw new SecurityException("Viewer pairing key rejected");
 
             session = createInitialSession(maxDimension, fps, bitrate);
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
 
-            while (running && clientSocket != null && !clientSocket.isClosed()) {
+            while (running && videoClientSocket != null && !videoClientSocket.isClosed()) {
                 int currentRotation = getDisplayRotation();
                 if (currentRotation != session.rotation) {
-                    // Keep the same VirtualDisplay. Android 14+ limits a MediaProjection
-                    // session to one VirtualDisplay; resize it and swap its encoder Surface.
                     session = reconfigureSession(session, maxDimension, fps, bitrate);
                     continue;
                 }
@@ -171,9 +201,7 @@ public class MirrorHostService extends Service {
                 }
             }
         } catch (Exception error) {
-            if (running) {
-                android.util.Log.e("OfflineMirror", "Stream stopped: " + error.getMessage(), error);
-            }
+            if (running) android.util.Log.e("OfflineMirror", "Video stream stopped", error);
         } finally {
             running = false;
             closeSockets();
@@ -183,6 +211,119 @@ public class MirrorHostService extends Service {
             }
             stopSelf();
         }
+    }
+
+    private void serveAudio() {
+        DataOutputStream output = null;
+        try {
+            audioServerSocket = new ServerSocket(AUDIO_PORT);
+            audioServerSocket.setReuseAddress(true);
+            audioClientSocket = audioServerSocket.accept();
+            audioClientSocket.setTcpNoDelay(true);
+            output = new DataOutputStream(new BufferedOutputStream(
+                    audioClientSocket.getOutputStream(), 32 * 1024));
+
+            DataInputStream authInput = authenticate(audioClientSocket, output);
+            if (authInput == null) throw new SecurityException("Audio pairing key rejected");
+
+            final int sampleRate = 44100;
+            final int channelMask = AudioFormat.CHANNEL_IN_STEREO;
+            int minBytes = AudioRecord.getMinBufferSize(
+                    sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT);
+            int bufferBytes = Math.max(16384, minBytes > 0 ? minBytes * 2 : 32768);
+
+            AudioPlaybackCaptureConfigurationCompat config =
+                    new AudioPlaybackCaptureConfigurationCompat(projection);
+            AudioFormat format = new AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(channelMask)
+                    .build();
+
+            audioRecord = new AudioRecord.Builder()
+                    .setAudioFormat(format)
+                    .setBufferSizeInBytes(bufferBytes)
+                    .setAudioPlaybackCaptureConfig(config.build())
+                    .build();
+
+            if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+                throw new IllegalStateException("Playback capture could not initialize");
+            }
+
+            output.writeInt(sampleRate);
+            output.writeInt(2);
+            output.writeInt(AudioFormat.ENCODING_PCM_16BIT);
+            output.flush();
+
+            byte[] buffer = new byte[8192];
+            audioRecord.startRecording();
+            while (running && audioClientSocket != null && !audioClientSocket.isClosed()) {
+                int count = audioRecord.read(buffer, 0, buffer.length, AudioRecord.READ_BLOCKING);
+                if (count > 0) {
+                    output.writeInt(count);
+                    output.write(buffer, 0, count);
+                    output.flush();
+                }
+            }
+        } catch (Exception error) {
+            if (running) android.util.Log.w("OfflineMirror", "Audio capture unavailable: " + error.getMessage());
+        } finally {
+            if (audioRecord != null) {
+                try { audioRecord.stop(); } catch (Exception ignored) {}
+                try { audioRecord.release(); } catch (Exception ignored) {}
+                audioRecord = null;
+            }
+            try { if (output != null) output.close(); } catch (Exception ignored) {}
+            try { if (audioClientSocket != null) audioClientSocket.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void serveControl() {
+        try {
+            controlServerSocket = new ServerSocket(CONTROL_PORT);
+            controlServerSocket.setReuseAddress(true);
+            controlClientSocket = controlServerSocket.accept();
+            controlClientSocket.setTcpNoDelay(true);
+
+            DataOutputStream authOutput = new DataOutputStream(
+                    new BufferedOutputStream(controlClientSocket.getOutputStream()));
+            DataInputStream input = authenticate(controlClientSocket, authOutput);
+            if (input == null) throw new SecurityException("Control pairing key rejected");
+
+            while (running && !controlClientSocket.isClosed()) {
+                int type = input.readUnsignedByte();
+                if (type == 1 || type == 2) {
+                    float x = input.readFloat();
+                    float y = input.readFloat();
+                    int duration = input.readInt();
+                    RemoteAccessibilityService.dispatchRemoteGesture(
+                            type, x, y, x, y, duration);
+                } else if (type == 3) {
+                    float x1 = input.readFloat();
+                    float y1 = input.readFloat();
+                    float x2 = input.readFloat();
+                    float y2 = input.readFloat();
+                    int duration = input.readInt();
+                    RemoteAccessibilityService.dispatchRemoteGesture(
+                            type, x1, y1, x2, y2, duration);
+                } else {
+                    throw new IllegalArgumentException("Unknown remote touch command");
+                }
+            }
+        } catch (Exception error) {
+            if (running) android.util.Log.w("OfflineMirror", "Remote touch disconnected: " + error.getMessage());
+        } finally {
+            try { if (controlClientSocket != null) controlClientSocket.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    private DataInputStream authenticate(Socket socket, DataOutputStream output) throws Exception {
+        DataInputStream input = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+        String suppliedKey = input.readUTF();
+        boolean accepted = sessionKey != null && sessionKey.equals(suppliedKey);
+        output.writeBoolean(accepted);
+        output.flush();
+        return accepted ? input : null;
     }
 
     private EncoderSession createInitialSession(int maxDimension, int fps, int bitrate)
@@ -284,13 +425,20 @@ public class MirrorHostService extends Service {
     }
 
     private void closeSockets() {
-        try { if (clientSocket != null) clientSocket.close(); } catch (Exception ignored) {}
-        try { if (serverSocket != null) serverSocket.close(); } catch (Exception ignored) {}
+        try { if (videoClientSocket != null) videoClientSocket.close(); } catch (Exception ignored) {}
+        try { if (videoServerSocket != null) videoServerSocket.close(); } catch (Exception ignored) {}
+        try { if (audioClientSocket != null) audioClientSocket.close(); } catch (Exception ignored) {}
+        try { if (audioServerSocket != null) audioServerSocket.close(); } catch (Exception ignored) {}
+        try { if (controlClientSocket != null) controlClientSocket.close(); } catch (Exception ignored) {}
+        try { if (controlServerSocket != null) controlServerSocket.close(); } catch (Exception ignored) {}
     }
 
     private void stopStreaming() {
         running = false;
         closeSockets();
+        if (audioRecord != null) {
+            try { audioRecord.stop(); } catch (Exception ignored) {}
+        }
         if (projection != null) {
             try {
                 if (projectionCallback != null) projection.unregisterCallback(projectionCallback);
@@ -331,7 +479,7 @@ public class MirrorHostService extends Service {
         }
         return builder
                 .setContentTitle("OfflineMirror is sharing")
-                .setContentText("Local mirroring • auto portrait/landscape • port " + PORT)
+                .setContentText("Screen, optional audio and paired remote touch • local network")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setOngoing(true)
                 .addAction(android.R.drawable.ic_media_pause, "Stop", stopPending)
@@ -347,6 +495,23 @@ public class MirrorHostService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    private static final class AudioPlaybackCaptureConfigurationCompat {
+        private final MediaProjection projection;
+
+        AudioPlaybackCaptureConfigurationCompat(MediaProjection projection) {
+            this.projection = projection;
+        }
+
+        @androidx.annotation.RequiresApi(29)
+        android.media.AudioPlaybackCaptureConfiguration build() {
+            return new android.media.AudioPlaybackCaptureConfiguration.Builder(projection)
+                    .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                    .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                    .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                    .build();
+        }
     }
 
     private static final class EncoderSession {
