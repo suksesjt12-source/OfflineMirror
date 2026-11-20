@@ -99,8 +99,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         getWindow().setNavigationBarColor(Color.BLACK);
         enableImmersiveViewer();
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
 
         status = new TextView(this);
@@ -109,8 +108,10 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         status.setMaxLines(3);
         status.setGravity(Gravity.CENTER_VERTICAL);
         status.setPadding(dp(12), dp(5), dp(12), dp(5));
-        root.addView(status, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
+        FrameLayout.LayoutParams statusParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52), Gravity.TOP);
+        status.setBackgroundColor(0x99000000);
+        root.addView(status, statusParams);
 
         TextView touchHint = new TextView(this);
         touchHint.setText("Gamepad nyata: analog, A/B/X/Y, L1/R1, SELECT/START • sentuh area kosong untuk tap");
@@ -118,8 +119,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         touchHint.setTextSize(11);
         touchHint.setGravity(Gravity.CENTER);
         touchHint.setPadding(dp(8), dp(4), dp(8), dp(4));
-        root.addView(touchHint, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(34)));
+        touchHint.setVisibility(View.GONE);
 
         LinearLayout gamepadBar = new LinearLayout(this);
         gamepadBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -137,8 +137,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         gamepadBar.addView(gamepadButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)));
         gamepadButton.setOnClickListener(v -> onGamepadButtonPressed());
-        root.addView(gamepadBar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+        gamepadBar.setVisibility(View.GONE);
 
         videoFrame = new FrameLayout(this);
         videoFrame.setBackgroundColor(Color.BLACK);
@@ -170,8 +169,22 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         });
         videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        root.addView(videoFrame, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        root.addView(videoFrame, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        Button overlayToggle = new Button(this);
+        overlayToggle.setText("SEMBUNYIKAN GAMEPAD");
+        overlayToggle.setTextSize(10);
+        FrameLayout.LayoutParams toggleParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(42), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        toggleParams.bottomMargin = dp(10);
+        root.addView(overlayToggle, toggleParams);
+        overlayToggle.setOnClickListener(button -> {
+            boolean visible = gamepadOverlay.getVisibility() == View.VISIBLE;
+            gamepadOverlay.setVisibility(visible ? View.GONE : View.VISIBLE);
+            overlayToggle.setText(visible ? "TAMPILKAN GAMEPAD" : "SEMBUNYIKAN GAMEPAD");
+            if (!visible) gamepadOverlay.releaseAllInputs();
+        });
+
         setContentView(root);
 
         videoStatus = "Menghubungkan ke Host " + host + "...";
