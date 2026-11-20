@@ -9,7 +9,6 @@ OfflineMirror mirrors one Android phone to another over the same local Wi-Fi net
 - Validate H.264 codec configuration before sending it to the Viewer.
 - Improve Viewer startup and first-frame status messages.
 - Validate that the Viewer rendering Surface is ready before starting the decoder.
-- Preserve IP-only connection, audio streaming, and remote touch.
 
 ## Use on two phones
 
@@ -19,11 +18,9 @@ OfflineMirror mirrors one Android phone to another over the same local Wi-Fi net
 4. Read the Host IP address and tap **COPY HOST ADDRESS**.
 5. On the Viewer, enter the Host IP and tap **CONNECT TO HOST**.
 6. Wait for the Viewer status to change to **Mirroring aktif**.
-7. For remote touch, the Host owner must manually enable OfflineMirror Remote Touch in Android Accessibility settings.
 
 ## Network and security
 
-This version has no QR pairing and no connection authentication. Any device that can reach the Host's local IP and service ports may connect. Use a private network you control. Remote Touch can send gestures to the Host when its Accessibility service is enabled. The TCP stream is not encrypted with TLS.
 
 The router or hotspot assigns local addresses; OfflineMirror detects them and does not invent random IP addresses.
 
@@ -36,3 +33,9 @@ System playback capture requires Android 10+ and only works for apps that permit
 - Android minSdk 26
 - compileSdk/targetSdk 35
 - Java 17
+
+
+## Two-phone hotspot setup
+OfflineMirror uses only the local network. Enable the hotspot on either phone and connect the second phone to it. The phone acting as the hotspot does not have to be the Host. On the phone whose screen will be shared, start Host mode and copy its displayed local IP address; on the other phone, enter that IP and the current pairing key in Viewer mode. Both phones must be connected to the same hotspot network. Internet access is not required.
+
+This release does not include remote touch or an Accessibility Service. Video uses H.264 over the local network; optional audio uses a separate local TCP connection.
