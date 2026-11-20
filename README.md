@@ -1,41 +1,50 @@
-# OfflineMirror 1.35.0
+# OfflineMirror 1.36.0
 
-OfflineMirror streams an Android screen to another Android phone over the same private Wi-Fi or hotspot. Internet access is not required.
+OfflineMirror mirrors an Android display to another Android phone over the same private Wi-Fi or hotspot. Internet access is not required.
 
 ## Setup
 
 1. Install OfflineMirror on both Android phones.
 2. Connect both phones to the same Wi-Fi network or hotspot.
-3. On the phone whose screen will be shared, tap **START SCREEN SHARING** and approve screen capture.
+3. On the Host, tap **START SCREEN SHARING** and approve screen capture.
 4. On the Host, tap **SHOW PAIRING QR**.
-5. On the other phone, scan the QR and connect as Viewer.
-6. Enable Bluetooth on both phones. In Viewer, tap **PAIR BT**. Leave Viewer open while pairing **OfflineMirror Gamepad + Mouse** from the Host Bluetooth settings.
+5. On the Viewer, scan the QR and connect to the Host.
+6. Enable Bluetooth on both phones. In Viewer, tap **PAIR BT**.
+7. Because the HID composite profile was corrected in v1.36.0, remove the old OfflineMirror pairing from the Host Bluetooth settings, then pair **OfflineMirror Gamepad + Mouse** again. Keep Viewer open.
 
 ## Bluetooth HID gamepad and mouse
 
-- Virtual gamepad and mouse reports travel through Bluetooth HID. No touchscreen gesture or touch-injection path exists on the Host.
-- The controller uses standard Android-oriented HID button order: A, B, X, Y, L1, R1, L2, R2, Select, Start, plus a four-way/diagonal D-pad hat and left/right analog axes.
-- L2/R2 are mapped to the standard trigger button slots and mirrored to the Brake/Accelerator axes so games that read either representation can use them.
-- The Viewer offers a dual-stick gamepad overlay. Portrait layout spacing is adjusted to reduce overlap between the right stick and face buttons.
-- Button press and release edges are queued individually; only continuous axis/mouse movement is coalesced. A focus loss, overlay hide, or activity shutdown sends neutral input to reduce stuck buttons.
-- Tap **MOUSE** in Viewer to show the Bluetooth trackpad and a visible cursor on the mirrored preview. Drag in the trackpad to move the pointer; use LEFT and RIGHT zones for clicks.
-- Use **HUD −** to hide the status panel, pairing, settings, mouse, volume, media and clipboard toolbar. **HUD +** restores it. The setting is remembered.
-- Android 9+ and a vendor Bluetooth stack exposing the HID Device profile are required. Keep Viewer open in the foreground while pairing and playing.
+- Gamepad and relative mouse are separate HID top-level collections under a composite Bluetooth HID profile.
+- The SDP device class advertises the combo mouse profile together with the gamepad subclass, instead of advertising only a gamepad. This is needed for hosts to recognize both input collections.
+- Gamepad reports use Android-oriented button usage IDs, a hat-switch D-pad, X/Y and Z/Rz axes, and C5/C4 trigger axes.
+- Mouse movement is accumulated before reports are sent. Fast trackpad movement is split into valid signed HID packets instead of replacing earlier movement samples.
+- Mouse button press/release transitions are sent independently from movement so clicks are not lost.
+- The Viewer trackpad retains fractional motion and tracks its mouse pointer independently from the left/right click pointers.
+- Gamepad stick zones are captured before button zones; the D-pad and shoulder/start/select hit areas have been spaced to reduce accidental or ambiguous presses.
+- A focus loss, gamepad overlay hide, or activity shutdown sends neutral controller state to prevent held buttons.
 
 ## Automatic mapping and compatibility
 
-The descriptor follows common Android game-controller HID usage order so Android's input system can classify the device and provide standard gamepad button/axis events to compatible games and emulators. Individual games or emulators may still define custom layouts or ignore external controllers; a universal forced mapping cannot be guaranteed. Use the game's own controller mapping screen if its displayed layout differs.
+Android's controller usage table maps A/B/X/Y to Button usages 1/2/4/5, L1/R1 to usages 7/8, the D-pad to the hat switch, the left stick to X/Y, the right stick to Z/Rz, and the triggers to Simulation Controls C5/C4. Compatible games and emulators can receive these standard Android input events. Individual games can still use a custom mapping screen.
+
+## Mouse controls
+
+In Viewer, tap **MOUSE** to show the trackpad and cursor preview. Drag the left portion of the trackpad to move the Bluetooth mouse pointer on the Host. Tap the upper-right zone for left click and the lower-right zone for right click. The visible cursor preview follows trackpad movement on the Viewer; the paired Host should also show the system pointer when its Bluetooth HID stack supports mouse input.
+
+## HUD
+
+Use **HUD −** to hide the status area and toolbar (Pair, Settings, Mouse, volume, Media and Clipboard). **HUD +** restores the controls. The setting is remembered.
 
 ## Network channels
 
 - Video: TCP port 48888 (H.264)
 - Audio: TCP port 48889 (optional; Android 10+ and capture-compatible apps)
 - Utility commands: TCP port 48890 (authenticated clipboard, volume, media and ping only)
-- The Wi-Fi utility channel does not carry gamepad, mouse, tap, hold, swipe or touch-injection input.
+- Wi-Fi does not carry touch injection, gamepad input or mouse input.
 
 ## Compatibility notes
 
-- Screen sharing: Android 5.0+
+- Screen mirroring: Android 5.0+
 - Bluetooth HID gamepad and mouse: Android 9+ and vendor HID Device support
-- Audio playback capture: Android 10+ and only apps that permit capture
-- Device firmware and individual games/emulators may restrict screen capture or controller support.
+- Audio playback capture: Android 10+ and capture-compatible apps
+- Host firmware must expose support for the HID Device profile and composite mouse/gamepad collections.

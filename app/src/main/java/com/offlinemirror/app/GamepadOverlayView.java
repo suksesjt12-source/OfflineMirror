@@ -122,7 +122,8 @@ public final class GamepadOverlayView extends View {
     }
 
     private float dpadCenterY() {
-        return getHeight() * (isLandscapeLayout() ? 0.52f : 0.48f);
+        // Keep the D-pad hit area clear of the left analog stick.
+        return getHeight() * (isLandscapeLayout() ? 0.44f : 0.48f);
     }
 
     private float dpadRadius() {
@@ -158,16 +159,27 @@ public final class GamepadOverlayView extends View {
 
     private float buttonX(int bit) {
         float x;
-        if (bit == BUTTON_A || bit == BUTTON_Y) x = getWidth() * (isLandscapeLayout() ? 0.88f : 0.84f);
-        else if (bit == BUTTON_B) x = getWidth() * (isLandscapeLayout() ? 0.94f : 0.94f);
-        else if (bit == BUTTON_X) x = getWidth() * (isLandscapeLayout() ? 0.82f : 0.76f);
-        else if (bit == BUTTON_L1) x = getWidth() * 0.08f;
-        else if (bit == BUTTON_L2) x = getWidth() * 0.20f;
-        else if (bit == BUTTON_SELECT) x = getWidth() * (isLandscapeLayout() ? 0.43f : 0.35f);
-        else if (bit == BUTTON_START) x = getWidth() * (isLandscapeLayout() ? 0.57f : 0.62f);
-        else if (bit == BUTTON_R2) x = getWidth() * 0.80f;
-        else if (bit == BUTTON_R1) x = getWidth() * 0.92f;
-        else x = getWidth() * 0.88f;
+        if (bit == BUTTON_A || bit == BUTTON_Y) {
+            x = getWidth() * (isLandscapeLayout() ? 0.88f : 0.84f);
+        } else if (bit == BUTTON_B) {
+            x = getWidth() * 0.94f;
+        } else if (bit == BUTTON_X) {
+            x = getWidth() * (isLandscapeLayout() ? 0.82f : 0.76f);
+        } else if (bit == BUTTON_L1) {
+            x = getWidth() * 0.10f;
+        } else if (bit == BUTTON_L2) {
+            x = getWidth() * 0.27f;
+        } else if (bit == BUTTON_SELECT) {
+            x = getWidth() * (isLandscapeLayout() ? 0.40f : 0.39f);
+        } else if (bit == BUTTON_START) {
+            x = getWidth() * (isLandscapeLayout() ? 0.60f : 0.61f);
+        } else if (bit == BUTTON_R2) {
+            x = getWidth() * 0.73f;
+        } else if (bit == BUTTON_R1) {
+            x = getWidth() * 0.90f;
+        } else {
+            x = getWidth() * 0.88f;
+        }
         return layoutPreset == 2 ? getWidth() - x : x;
     }
 
@@ -253,8 +265,10 @@ public final class GamepadOverlayView extends View {
     private void drawPill(Canvas canvas, int bit, String text) {
         float x = buttonX(bit);
         float y = buttonY(bit);
-        float width = (bit == BUTTON_SELECT || bit == BUTTON_START) ? dp(37) : dp(27);
-        float height = dp(16);
+        float width = (bit == BUTTON_SELECT || bit == BUTTON_START)
+                ? Math.min(dp(27), getWidth() * 0.035f)
+                : Math.min(dp(21), getWidth() * 0.028f);
+        float height = dp(14);
         fill.setColor((buttons & bit) != 0 ? 0xC94B8CC8 : 0x71303C50);
         canvas.drawRoundRect(x - width, y - height, x + width, y + height,
                 dp(10), dp(10), fill);
@@ -290,9 +304,12 @@ public final class GamepadOverlayView extends View {
         int[] topButtons = {BUTTON_L1, BUTTON_L2, BUTTON_R1, BUTTON_R2,
                 BUTTON_SELECT, BUTTON_START};
         for (int bit : topButtons) {
-            float width = (bit == BUTTON_SELECT || bit == BUTTON_START) ? dp(39) : dp(29);
-            if (Math.abs(x - buttonX(bit)) <= width
-                    && Math.abs(y - buttonY(bit)) <= dp(22)) return bit;
+            float halfWidth = (bit == BUTTON_SELECT || bit == BUTTON_START)
+                    ? Math.min(dp(24), getWidth() * 0.032f)
+                    : Math.min(dp(17), getWidth() * 0.026f);
+            float halfHeight = Math.min(dp(14), getHeight() * 0.045f);
+            if (Math.abs(x - buttonX(bit)) <= halfWidth
+                    && Math.abs(y - buttonY(bit)) <= halfHeight) return bit;
         }
         return 0;
     }
@@ -335,22 +352,20 @@ public final class GamepadOverlayView extends View {
     private void pressPointer(MotionEvent event, int index) {
         int pointerId = event.getPointerId(index);
         if (buttonPointers.containsKey(pointerId)
-                || pointerId == leftStickPointer || pointerId == rightStickPointer) return;
-        float x = event.getX(index);
-        float y = event.getY(index);
-
-        int bit = hitButton(x, y);
-        if (bit != 0) {
-            buttonPointers.put(pointerId, bit);
-            rebuildButtonMask();
-            emitState();
+                || pointerId == leftStickPointer || pointerId == rightStickPointer) {
             return;
         }
 
+        float x = event.getX(index);
+        float y = event.getY(index);
         float dy = y - stickCenterY();
+
+        // Claim analog zones before testing buttons. The old order let the
+        // D-pad's generous hit circle steal touches from the left stick.
         float leftDx = x - leftStickCenterX();
+        float stickHitRadius = stickRadius() + dp(8);
         if (leftStickPointer == -1
-                && leftDx * leftDx + dy * dy <= Math.pow(stickRadius() + dp(12), 2)) {
+                && leftDx * leftDx + dy * dy <= stickHitRadius * stickHitRadius) {
             leftStickPointer = pointerId;
             updateStick(x, y, false);
             emitState();
@@ -359,13 +374,19 @@ public final class GamepadOverlayView extends View {
 
         float rightDx = x - rightStickCenterX();
         if (rightStickPointer == -1
-                && rightDx * rightDx + dy * dy <= Math.pow(stickRadius() + dp(12), 2)) {
+                && rightDx * rightDx + dy * dy <= stickHitRadius * stickHitRadius) {
             rightStickPointer = pointerId;
             updateStick(x, y, true);
             emitState();
             return;
         }
 
+        int bit = hitButton(x, y);
+        if (bit != 0) {
+            buttonPointers.put(pointerId, bit);
+            rebuildButtonMask();
+            emitState();
+        }
     }
 
     private void releasePointer(MotionEvent event, int index) {

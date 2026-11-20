@@ -614,7 +614,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         if (bonded == null || bonded.isEmpty()) {
             startBluetoothGamepad(null);
             new AlertDialog.Builder(this).setTitle("Bluetooth HID siap dipair")
-                    .setMessage("Viewer sekarang mendaftarkan diri sebagai gamepad Bluetooth. Pada HP Host, buka Setelan > Bluetooth, cari nama OfflineMirror Gamepad, lalu pair. Biarkan Viewer tetap terbuka. Setelah pairing, koneksi HID akan aktif otomatis.")
+                    .setMessage("Viewer mendaftarkan controller gabungan gamepad + mouse. Karena profil Bluetooth diperbarui, hapus pairing OfflineMirror lama dari daftar Bluetooth Host terlebih dahulu, lalu pair ulang OfflineMirror Gamepad + Mouse. Biarkan Viewer tetap terbuka. Setelah pairing, input tombol, analog, dan pointer mouse akan aktif melalui Bluetooth HID.")
                     .setPositiveButton("Mengerti", null)
                     .setNeutralButton("Setelan Bluetooth Viewer", (d, w) ->
                             startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)))
