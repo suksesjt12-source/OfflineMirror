@@ -7,6 +7,9 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.AudioAttributes;
@@ -16,10 +19,13 @@ import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
+import android.media.Image;
+import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.util.DisplayMetrics;
 import android.view.Display;
@@ -28,6 +34,7 @@ import android.view.WindowManager;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -46,6 +53,9 @@ public class MirrorHostService extends Service {
     private static final int AUDIO_PORT = 48889;
     private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
+    private static final int MAGIC_JPEG = 0x4F4D4A50;
+    private static final int JPEG_QUALITY = 58;
+    private static final int MAX_JPEG_FPS = 15;
 
     private volatile boolean running = false;
     private boolean audioEnabled = false;
@@ -160,68 +170,27 @@ public class MirrorHostService extends Service {
     }
 
     private void streamVideo(int maxDimension, int fps, int bitrate) {
-        EncoderSession session = null;
+        JpegSession session = null;
         DataOutputStream output = null;
-        boolean streamHeaderSent = false;
-
         try {
             videoClientSocket = acceptAuthenticated(videoServerSocket, "video");
             videoClientSocket.setTcpNoDelay(true);
             output = new DataOutputStream(new BufferedOutputStream(
-                    videoClientSocket.getOutputStream(), 256 * 1024));
+                    videoClientSocket.getOutputStream(), 512 * 1024));
 
-            session = createInitialSession(maxDimension, fps, bitrate);
-            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-
+            // JPEG frames from ImageReader bypass vendor-specific H.264 encoder/decoder issues.
+            // The virtual display still uses the user's single MediaProjection session.
+            session = createJpegSession(maxDimension, fps, output);
             while (running && videoClientSocket != null && !videoClientSocket.isClosed()) {
-                int currentRotation = getDisplayRotation();
-                if (currentRotation != session.rotation) {
-                    session = reconfigureSession(session, maxDimension, fps, bitrate);
-                    continue;
+                if (getDisplayRotation() != session.rotation) {
+                    session = reconfigureJpegSession(session, maxDimension, fps);
                 }
-
-                int index = session.encoder.dequeueOutputBuffer(info, 150_000);
-                if (index == MediaCodec.INFO_TRY_AGAIN_LATER) continue;
-
-                if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    MediaFormat outputFormat = session.encoder.getOutputFormat();
-                    byte[] csd0 = copyBuffer(outputFormat.getByteBuffer("csd-0"));
-                    byte[] csd1 = copyBuffer(outputFormat.getByteBuffer("csd-1"));
-                    android.util.Log.i("OfflineMirror", "AVC output format: "
-                            + session.width + "x" + session.height + " csd0="
-                            + csd0.length + " csd1=" + csd1.length);
-                    if (streamHeaderSent) output.writeInt(-1);
-                    writeStreamHeader(output, session.width, session.height, csd0, csd1);
-                    streamHeaderSent = true;
-                    continue;
-                }
-                if (index < 0) continue;
-
-                try {
-                    if (streamHeaderSent && info.size > 0) {
-                        ByteBuffer encoded = session.encoder.getOutputBuffer(index);
-                        if (encoded != null) {
-                            encoded.position(info.offset);
-                            encoded.limit(info.offset + info.size);
-                            byte[] packet = new byte[info.size];
-                            encoded.get(packet);
-                            output.writeInt(packet.length);
-                            int packetFlags = info.flags & (MediaCodec.BUFFER_FLAG_CODEC_CONFIG
-                                    | MediaCodec.BUFFER_FLAG_KEY_FRAME
-                                    | MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-                            output.writeInt(packetFlags);
-                            output.writeLong(info.presentationTimeUs);
-                            output.write(packet);
-                            output.flush();
-                        }
-                    }
-                    if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break;
-                } finally {
-                    session.encoder.releaseOutputBuffer(index, false);
-                }
+                Thread.sleep(100);
             }
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
         } catch (Exception error) {
-            if (running) android.util.Log.e("OfflineMirror", "Video stream stopped", error);
+            if (running) android.util.Log.e("OfflineMirror", "JPEG video stream stopped", error);
         } finally {
             running = false;
             closeSockets();
@@ -230,6 +199,208 @@ public class MirrorHostService extends Service {
                 try { output.close(); } catch (Exception ignored) {}
             }
             stopSelf();
+        }
+    }
+
+    private JpegSession createJpegSession(int maxDimension, int fps,
+                                           DataOutputStream output) throws Exception {
+        DisplayMetrics metrics = new DisplayMetrics();
+        WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        Display display = wm.getDefaultDisplay();
+        display.getRealMetrics(metrics);
+        int[] size = scaledSize(metrics, Math.min(1280, maxDimension));
+
+        HandlerThread thread = new HandlerThread("OfflineMirror-JPEG-Capture");
+        thread.start();
+        Handler handler = new Handler(thread.getLooper());
+        ImageReader reader = null;
+        VirtualDisplay virtualDisplay = null;
+        try {
+            reader = ImageReader.newInstance(size[0], size[1],
+                    PixelFormat.RGBA_8888, 3);
+            virtualDisplay = projection.createVirtualDisplay(
+                    "OfflineMirror-JPEG", size[0], size[1], metrics.densityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    reader.getSurface(), null, null);
+            if (virtualDisplay == null) {
+                throw new IllegalStateException("Android tidak membuat VirtualDisplay");
+            }
+
+            int targetFps = Math.max(5, Math.min(MAX_JPEG_FPS, fps));
+            JpegSession session = new JpegSession(virtualDisplay, reader, thread, handler,
+                    output, size[0], size[1], display.getRotation(), targetFps);
+            writeJpegHeader(output, session.width, session.height, session.fps);
+            session.startListening();
+            android.util.Log.i("OfflineMirror", "JPEG screen capture started: "
+                    + session.width + "x" + session.height + " @" + targetFps + "fps");
+            return session;
+        } catch (Exception error) {
+            if (virtualDisplay != null) {
+                try { virtualDisplay.release(); } catch (Exception ignored) {}
+            }
+            if (reader != null) {
+                try { reader.close(); } catch (Exception ignored) {}
+            }
+            thread.quitSafely();
+            throw error;
+        }
+    }
+
+    private JpegSession reconfigureJpegSession(JpegSession old, int maxDimension, int fps)
+            throws Exception {
+        DisplayMetrics metrics = new DisplayMetrics();
+        WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        Display display = wm.getDefaultDisplay();
+        display.getRealMetrics(metrics);
+        int[] size = scaledSize(metrics, Math.min(1280, maxDimension));
+
+        ImageReader nextReader = ImageReader.newInstance(
+                size[0], size[1], PixelFormat.RGBA_8888, 3);
+        try {
+            old.reader.setOnImageAvailableListener(null, null);
+            old.virtualDisplay.setSurface(null);
+            old.releaseImageResources();
+            old.virtualDisplay.resize(size[0], size[1], metrics.densityDpi);
+            old.virtualDisplay.setSurface(nextReader.getSurface());
+
+            int targetFps = Math.max(5, Math.min(MAX_JPEG_FPS, fps));
+            JpegSession next = new JpegSession(old.virtualDisplay, nextReader,
+                    old.thread, old.handler, old.output, size[0], size[1],
+                    display.getRotation(), targetFps);
+            synchronized (old.output) {
+                old.output.writeInt(-1);
+                writeJpegHeader(old.output, next.width, next.height, next.fps);
+            }
+            next.startListening();
+            android.util.Log.i("OfflineMirror", "JPEG stream rotated to "
+                    + next.width + "x" + next.height);
+            return next;
+        } catch (Exception error) {
+            try { nextReader.close(); } catch (Exception ignored) {}
+            throw error;
+        }
+    }
+
+    private void writeJpegHeader(DataOutputStream output, int width, int height, int fps)
+            throws IOException {
+        synchronized (output) {
+            output.writeInt(MAGIC_JPEG);
+            output.writeInt(width);
+            output.writeInt(height);
+            output.writeInt(fps);
+            output.flush();
+        }
+    }
+
+    private void encodeJpegFrame(JpegSession session, ImageReader reader) {
+        Image image = null;
+        try {
+            if (!running || session.closed) return;
+            image = reader.acquireLatestImage();
+            if (image == null) return;
+
+            long timestampNs = image.getTimestamp();
+            long frameIntervalNs = 1_000_000_000L / session.fps;
+            if (timestampNs - session.lastFrameTimestampNs < frameIntervalNs) return;
+
+            Image.Plane[] planes = image.getPlanes();
+            if (planes == null || planes.length == 0) return;
+            Image.Plane plane = planes[0];
+            ByteBuffer buffer = plane.getBuffer();
+            int rowStride = plane.getRowStride();
+            int pixelStride = plane.getPixelStride();
+            int base = buffer.position();
+            if (pixelStride < 4) {
+                throw new IllegalStateException("Format RGBA ImageReader tidak didukung");
+            }
+
+            int width = image.getWidth();
+            int height = image.getHeight();
+            for (int y = 0; y < height; y++) {
+                int rowOffset = base + y * rowStride;
+                int dstOffset = y * width;
+                for (int x = 0; x < width; x++) {
+                    int p = rowOffset + x * pixelStride;
+                    int red = buffer.get(p) & 0xFF;
+                    int green = buffer.get(p + 1) & 0xFF;
+                    int blue = buffer.get(p + 2) & 0xFF;
+                    int alpha = buffer.get(p + 3) & 0xFF;
+                    session.pixels[dstOffset + x] = Color.argb(alpha, red, green, blue);
+                }
+            }
+
+            session.bitmap.setPixels(session.pixels, 0, width, 0, 0, width, height);
+            ByteArrayOutputStream jpeg = new ByteArrayOutputStream(width * height / 5);
+            if (!session.bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, jpeg)) {
+                throw new IllegalStateException("JPEG compression failed");
+            }
+            byte[] packet = jpeg.toByteArray();
+            synchronized (session.output) {
+                session.output.writeInt(packet.length);
+                session.output.writeLong(timestampNs / 1000L);
+                session.output.write(packet);
+                session.output.flush();
+            }
+            session.lastFrameTimestampNs = timestampNs;
+        } catch (IOException error) {
+            android.util.Log.e("OfflineMirror", "Viewer disconnected from JPEG video", error);
+            running = false;
+            closeSockets();
+        } catch (Exception error) {
+            android.util.Log.w("OfflineMirror", "Could not encode a screen frame", error);
+        } finally {
+            if (image != null) image.close();
+        }
+    }
+
+    private final class JpegSession {
+        final VirtualDisplay virtualDisplay;
+        final ImageReader reader;
+        final HandlerThread thread;
+        final Handler handler;
+        final DataOutputStream output;
+        final int width;
+        final int height;
+        final int rotation;
+        final int fps;
+        final Bitmap bitmap;
+        final int[] pixels;
+        volatile long lastFrameTimestampNs = 0;
+        volatile boolean closed = false;
+
+        JpegSession(VirtualDisplay virtualDisplay, ImageReader reader,
+                    HandlerThread thread, Handler handler, DataOutputStream output,
+                    int width, int height, int rotation, int fps) {
+            this.virtualDisplay = virtualDisplay;
+            this.reader = reader;
+            this.thread = thread;
+            this.handler = handler;
+            this.output = output;
+            this.width = width;
+            this.height = height;
+            this.rotation = rotation;
+            this.fps = fps;
+            this.bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            this.pixels = new int[width * height];
+        }
+
+        void startListening() {
+            reader.setOnImageAvailableListener(
+                    available -> encodeJpegFrame(this, available), handler);
+        }
+
+        void releaseImageResources() {
+            closed = true;
+            try { reader.close(); } catch (Exception ignored) {}
+            try { bitmap.recycle(); } catch (Exception ignored) {}
+        }
+
+        void release() {
+            closed = true;
+            releaseImageResources();
+            try { virtualDisplay.setSurface(null); } catch (Exception ignored) {}
+            try { virtualDisplay.release(); } catch (Exception ignored) {}
+            thread.quitSafely();
         }
     }
 

@@ -38,6 +38,7 @@
             android:foregroundServiceType="mediaProjection" />
         <service
             android:name=".RemoteAccessibilityService"
+            android:enabled="true"
             android:label="OfflineMirror Remote Touch"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true">

@@ -189,11 +189,16 @@ public class MainActivity extends Activity {
         page.addView(accessibilityButton, accessibilityParams);
         accessibilityButton.setOnClickListener(v -> {
             new AlertDialog.Builder(this)
-                    .setTitle("Enable Remote Touch")
-                    .setMessage("Android requires you to enable OfflineMirror Remote Touch manually in Accessibility settings. This allows a paired Viewer to send taps and swipes while sharing is active. The service does not read window content.")
-                    .setNegativeButton("Cancel", null)
-                    .setPositiveButton("Open settings", (dialog, which) ->
+                    .setTitle("Aktifkan Remote Touch di Android 14")
+                    .setMessage("Karena OfflineMirror dipasang dari file APK, Android 13/14 dapat memblokir layanan aksesibilitas. Langkahnya: 1) Buka Info Aplikasi. 2) Tekan menu ⋮ di kanan atas. 3) Pilih Izinkan setelan terbatas / Allow restricted settings. 4) Kembali, buka Aksesibilitas > Aplikasi terunduh > OfflineMirror Remote Touch, lalu aktifkan. Android meminta langkah ini demi keamanan; aplikasi tidak dapat mengaktifkannya sendiri.")
+                    .setNegativeButton("Tutup", null)
+                    .setNeutralButton("Buka Aksesibilitas", (dialog, which) ->
                             startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
+                    .setPositiveButton("Buka Info Aplikasi", (dialog, which) -> {
+                        Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:" + getPackageName()));
+                        startActivity(details);
+                    })
                     .show();
         });
 
@@ -502,6 +507,11 @@ public class MainActivity extends Activity {
         if (hostAddress != null) {
             hostAddress.setText("Alamat HP ini (IP lokal): "
                     + NetworkAddress.getLocalIpv4(this) + "  •  Port Host: " + VIDEO_PORT);
+        }
+        if (statusText != null) {
+            setStatus(RemoteAccessibilityService.isEnabled()
+                    ? "Remote Touch aktif pada HP ini."
+                    : "Remote Touch belum aktif. Android 14 mungkin meminta Allow restricted settings terlebih dahulu.");
         }
     }
 
