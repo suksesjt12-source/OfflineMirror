@@ -1,15 +1,12 @@
 package com.offlinemirror.app;
 
 import android.app.Activity;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.Paint;
-import android.graphics.RectF;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioTrack;
+import android.media.MediaCodec;
+import android.media.MediaFormat;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -27,12 +24,13 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 
 public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private static final int VIDEO_PORT = 48888;
     private static final int AUDIO_PORT = 48889;
     private static final int CONTROL_PORT = 48890;
-    private static final int MAGIC_JPEG = 0x4F4D4A50;
+    private static final int MAGIC = 0x4F4D4952;
 
     private SurfaceView surfaceView;
     private TextView status;
@@ -48,8 +46,8 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private volatile Socket audioSocket;
     private volatile Socket controlSocket;
     private volatile DataOutputStream controlOutput;
-    private Thread receiveThread;
-    private Thread audioThread;
+    private volatile Thread receiveThread;
+    private volatile Thread audioThread;
     private final Object receiverLock = new Object();
     private Surface pendingSurface;
     private boolean restartWorkerRunning = false;
@@ -122,7 +120,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
 
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-        // The drawing code uses the current Canvas dimensions on every frame.
+        // The H.264 decoder continues drawing to the same Surface while Android resizes it.
     }
 
     @Override
@@ -135,34 +133,26 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         synchronized (receiverLock) {
             if (activityDestroyed) return;
             pendingSurface = surface;
-
-            // A restart worker waits for the old receiver and then uses the newest Surface.
             if (restartWorkerRunning) return;
 
-            if (receiveThread == null || !receiveThread.isAlive()) {
+            Thread previous = receiveThread;
+            if (previous == null || !previous.isAlive()) {
                 launchReceiverLocked(surface);
                 return;
             }
 
-            videoStatus = "Orientasi layar berubah. Menyambungkan ulang video...";
-            updateStatus();
             stopReceiverLocked();
-
             restartWorkerRunning = true;
-            Thread previousReceiver = receiveThread;
+            Thread previousAudio = audioThread;
             Thread restartWorker = new Thread(() -> {
-                try {
-                    previousReceiver.join();
-                } catch (InterruptedException error) {
-                    Thread.currentThread().interrupt();
-                }
-
+                joinQuietly(previous);
+                joinQuietly(previousAudio);
                 synchronized (receiverLock) {
                     restartWorkerRunning = false;
-                    Surface latestSurface = pendingSurface;
-                    if (!activityDestroyed && latestSurface != null && latestSurface.isValid()
-                            && !previousReceiver.isAlive()) {
-                        launchReceiverLocked(latestSurface);
+                    Surface latest = pendingSurface;
+                    if (!activityDestroyed && latest != null && latest.isValid()
+                            && (receiveThread == null || !receiveThread.isAlive())) {
+                        launchReceiverLocked(latest);
                     }
                 }
             }, "OfflineMirror-Viewer-Restart");
@@ -182,112 +172,120 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         closeAuxiliaryConnections();
     }
 
+    private void joinQuietly(Thread thread) {
+        if (thread == null || thread == Thread.currentThread()) return;
+        try {
+            thread.join(2500);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     private void receiveLoop(Surface surface) {
+        MediaCodec decoder = null;
         DataInputStream input = null;
         try {
             videoSocket = new Socket();
             videoSocket.setTcpNoDelay(true);
             videoSocket.connect(new InetSocketAddress(host, videoPort), 10_000);
             authenticateSocket(videoSocket);
-            videoStatus = "Video tersambung. Menunggu stream Host...";
+            videoStatus = "Terhubung. Menunggu encoder Host...";
             updateStatus();
 
             input = new DataInputStream(
-                    new BufferedInputStream(videoSocket.getInputStream(), 512 * 1024));
-            JpegStreamConfig config = readJpegStreamHeader(input);
-            videoStatus = "Stream gambar siap " + config.width + " × " + config.height
-                    + " @" + config.fps + "fps. Menunggu frame...";
+                    new BufferedInputStream(videoSocket.getInputStream(), 256 * 1024));
+
+            StreamConfig config = readStreamHeader(input);
+            videoStatus = "Header diterima. Menyiapkan decoder...";
+            updateStatus();
+            decoder = createDecoder(config, surface);
+            videoStatus = "Decoder siap " + config.width + " × " + config.height
+                    + ". Menunggu frame pertama...";
             updateStatus();
 
             connectControl();
             if (audioEnabled) startAudioPlayback();
 
+            MediaCodec.BufferInfo outputInfo = new MediaCodec.BufferInfo();
             boolean firstFrameRendered = false;
             long receivedPackets = 0;
             long receivedBytes = 0;
             while (running) {
                 int size = input.readInt();
+
+                // The Host sends -1 and a new header after changing screen orientation.
                 if (size == -1) {
-                    config = readJpegStreamHeader(input);
+                    decoder = releaseDecoder(decoder);
+                    config = readStreamHeader(input);
+                    decoder = createDecoder(config, surface);
                     firstFrameRendered = false;
-                    videoStatus = "Orientasi berubah: " + config.width + " × " + config.height;
+                    videoStatus = "Video " + config.width + " × " + config.height + " • rotated";
                     updateStatus();
                     continue;
                 }
-                if (size <= 0 || size > 12 * 1024 * 1024) {
-                    throw new IllegalStateException("Ukuran frame JPEG tidak valid: " + size);
-                }
+
+                int flags = input.readInt();
                 long presentationTimeUs = input.readLong();
+                if (size <= 0 || size > 8 * 1024 * 1024) {
+                    throw new IllegalStateException("Invalid video packet");
+                }
                 byte[] packet = new byte[size];
                 input.readFully(packet);
-                Bitmap frame = BitmapFactory.decodeByteArray(packet, 0, packet.length);
-                if (frame == null) {
-                    throw new IllegalStateException("Viewer tidak dapat membaca frame JPEG");
-                }
-                renderJpegFrame(surface, frame);
-                frame.recycle();
-
                 receivedPackets++;
                 receivedBytes += size;
-                if (!firstFrameRendered) {
-                    firstFrameRendered = true;
-                    videoStatus = "Mirroring aktif • " + config.width + " × " + config.height;
-                    updateStatus();
+
+                if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+                        && (config.csd0.length > 0 || config.csd1.length > 0)) {
+                    continue;
                 }
-                if (receivedPackets == 1 || receivedPackets % 60 == 0) {
-                    android.util.Log.i("OfflineMirror", "Viewer JPEG frames=" + receivedPackets
-                            + " bytes=" + receivedBytes + " lastPtsUs=" + presentationTimeUs);
+
+                int inputIndex;
+                do {
+                    inputIndex = decoder.dequeueInputBuffer(10_000);
+                    if (!running) break;
+                } while (inputIndex < 0);
+
+                if (!running || inputIndex < 0) break;
+                ByteBuffer inputBuffer = decoder.getInputBuffer(inputIndex);
+                if (inputBuffer == null || packet.length > inputBuffer.capacity()) {
+                    throw new IllegalStateException("Decoder input buffer is too small");
+                }
+                inputBuffer.clear();
+                inputBuffer.put(packet);
+                int decoderFlags = flags & (MediaCodec.BUFFER_FLAG_CODEC_CONFIG
+                        | MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                decoder.queueInputBuffer(inputIndex, 0, packet.length,
+                        presentationTimeUs, decoderFlags);
+
+                int outputIndex = decoder.dequeueOutputBuffer(outputInfo, 10_000);
+                while (outputIndex >= 0 && running) {
+                    boolean renderFrame = outputInfo.size > 0;
+                    decoder.releaseOutputBuffer(outputIndex, renderFrame);
+                    if (renderFrame && !firstFrameRendered) {
+                        firstFrameRendered = true;
+                        videoStatus = "Mirroring aktif • " + config.width + " × " + config.height;
+                        updateStatus();
+                    }
+                    outputIndex = decoder.dequeueOutputBuffer(outputInfo, 0);
+                }
+                if (receivedPackets == 1 || receivedPackets % 90 == 0) {
+                    android.util.Log.i("OfflineMirror", "Viewer video packets=" + receivedPackets
+                            + " bytes=" + receivedBytes + " resolution="
+                            + config.width + "x" + config.height);
                 }
             }
         } catch (Exception error) {
-            android.util.Log.e("OfflineMirror", "Viewer JPEG stream failed", error);
+            android.util.Log.e("OfflineMirror", "Viewer video receive failed", error);
             if (running) {
-                videoStatus = "Video gagal: " + error.getMessage();
+                videoStatus = "Gagal menerima video: " + error.getMessage();
                 updateStatus();
             }
         } finally {
             running = false;
             try { if (input != null) input.close(); } catch (Exception ignored) {}
             try { if (videoSocket != null) videoSocket.close(); } catch (Exception ignored) {}
+            releaseDecoder(decoder);
             closeAuxiliaryConnections();
-        }
-    }
-
-    private JpegStreamConfig readJpegStreamHeader(DataInputStream input) throws Exception {
-        int magic = input.readInt();
-        if (magic != MAGIC_JPEG) {
-            throw new IllegalStateException("Host bukan OfflineMirror JPEG stream (magic mismatch)");
-        }
-        int width = input.readInt();
-        int height = input.readInt();
-        int fps = input.readInt();
-        if (width < 2 || height < 2 || width > 4096 || height > 4096
-                || fps < 1 || fps > 30) {
-            throw new IllegalStateException("Header video Host tidak valid");
-        }
-        return new JpegStreamConfig(width, height, fps);
-    }
-
-    private void renderJpegFrame(Surface surface, Bitmap bitmap) throws Exception {
-        if (surface == null || !surface.isValid()) {
-            throw new IllegalStateException("Surface Viewer tidak aktif");
-        }
-        Canvas canvas = surface.lockCanvas(null);
-        if (canvas == null) throw new IllegalStateException("Canvas Viewer tidak tersedia");
-        try {
-            canvas.drawColor(Color.BLACK);
-            float scale = Math.min(
-                    canvas.getWidth() / (float) bitmap.getWidth(),
-                    canvas.getHeight() / (float) bitmap.getHeight());
-            float width = bitmap.getWidth() * scale;
-            float height = bitmap.getHeight() * scale;
-            float left = (canvas.getWidth() - width) / 2f;
-            float top = (canvas.getHeight() - height) / 2f;
-            Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
-            canvas.drawBitmap(bitmap, null,
-                    new RectF(left, top, left + width, top + height), paint);
-        } finally {
-            surface.unlockCanvasAndPost(canvas);
         }
     }
 
@@ -448,6 +446,62 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         }
     }
 
+    private StreamConfig readStreamHeader(DataInputStream input) throws Exception {
+        int magic = input.readInt();
+        if (magic != MAGIC) throw new IllegalStateException("Unsupported stream header");
+        int width = input.readInt();
+        int height = input.readInt();
+        if (width < 2 || height < 2 || width > 4096 || height > 4096) {
+            throw new IllegalStateException("Invalid video dimensions");
+        }
+        byte[] csd0 = readConfig(input);
+        byte[] csd1 = readConfig(input);
+        // Some hardware encoders send SPS/PPS as a separate codec-config buffer.
+        // The decoder accepts that buffer after it has been configured.
+        return new StreamConfig(width, height, csd0, csd1);
+    }
+
+    private MediaCodec createDecoder(StreamConfig config, Surface surface) throws Exception {
+        MediaFormat format = MediaFormat.createVideoFormat(
+                MediaFormat.MIMETYPE_VIDEO_AVC, config.width, config.height);
+        if (config.csd0.length > 0) format.setByteBuffer("csd-0", ByteBuffer.wrap(config.csd0));
+        if (config.csd1.length > 0) format.setByteBuffer("csd-1", ByteBuffer.wrap(config.csd1));
+        if (surface == null || !surface.isValid()) {
+            throw new IllegalStateException("Layar Viewer belum siap");
+        }
+        MediaCodec decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+        try {
+            decoder.configure(format, surface, null, 0);
+            decoder.start();
+            android.util.Log.i("OfflineMirror", "AVC decoder ready: "
+                    + config.width + "x" + config.height
+                    + " csd0=" + config.csd0.length + " csd1=" + config.csd1.length);
+            return decoder;
+        } catch (Exception error) {
+            try { decoder.release(); } catch (Exception ignored) {}
+            throw new IllegalStateException("Decoder H.264 gagal untuk "
+                    + config.width + "x" + config.height + ": " + error.getMessage(), error);
+        }
+    }
+
+    private MediaCodec releaseDecoder(MediaCodec decoder) {
+        if (decoder != null) {
+            try { decoder.stop(); } catch (Exception ignored) {}
+            try { decoder.release(); } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    private byte[] readConfig(DataInputStream input) throws Exception {
+        int size = input.readInt();
+        if (size < 0 || size > 1024 * 1024) {
+            throw new IllegalStateException("Invalid codec configuration");
+        }
+        byte[] bytes = new byte[size];
+        input.readFully(bytes);
+        return bytes;
+    }
+
     private float clamp(float value) {
         return Math.max(0f, Math.min(1f, value));
     }
@@ -491,14 +545,17 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         super.onDestroy();
     }
 
-    private static final class JpegStreamConfig {
+    private static final class StreamConfig {
         final int width;
         final int height;
-        final int fps;
-        JpegStreamConfig(int width, int height, int fps) {
+        final byte[] csd0;
+        final byte[] csd1;
+
+        StreamConfig(int width, int height, byte[] csd0, byte[] csd1) {
             this.width = width;
             this.height = height;
-            this.fps = fps;
+            this.csd0 = csd0;
+            this.csd1 = csd1;
         }
     }
 }
