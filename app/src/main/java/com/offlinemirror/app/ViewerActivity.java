@@ -1,12 +1,19 @@
 package com.offlinemirror.app;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -15,8 +22,11 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -25,6 +35,8 @@ import java.io.DataOutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private static final int VIDEO_PORT = 48888;
@@ -32,9 +44,15 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
     private static final int CONTROL_PORT = 48890;
     private static final int MAGIC = 0x4F4D4952;
     private static final int CONTROL_MAGIC = 0x4F4D4354;
+    private static final int REQUEST_BT_PERMISSION = 7382;
+    private static final int REQUEST_ENABLE_BT = 7383;
 
     private SurfaceView surfaceView;
     private TextView status;
+    private TextView gamepadStatus;
+    private Button gamepadButton;
+    private GamepadOverlayView gamepadOverlay;
+    private BluetoothHidGamepadApi28 bluetoothGamepad;
     private String host;
     private String sessionKey = "";
     private boolean audioEnabled;
@@ -92,23 +110,197 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
 
         TextView touchHint = new TextView(this);
-        touchHint.setText("Sentuh gambar: tap • tahan: tekan lama • geser: swipe");
+        touchHint.setText("Gamepad nyata: analog, A/B/X/Y, L1/R1, SELECT/START • sentuh area kosong untuk tap");
         touchHint.setTextColor(Color.rgb(190, 205, 229));
-        touchHint.setTextSize(12);
+        touchHint.setTextSize(11);
         touchHint.setGravity(Gravity.CENTER);
         touchHint.setPadding(dp(8), dp(4), dp(8), dp(4));
         root.addView(touchHint, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(34)));
 
+        LinearLayout gamepadBar = new LinearLayout(this);
+        gamepadBar.setOrientation(LinearLayout.HORIZONTAL);
+        gamepadBar.setGravity(Gravity.CENTER_VERTICAL);
+        gamepadBar.setPadding(dp(8), 0, dp(8), 0);
+        gamepadStatus = new TextView(this);
+        gamepadStatus.setText("Gamepad Bluetooth: belum tersambung");
+        gamepadStatus.setTextColor(Color.rgb(186, 207, 230));
+        gamepadStatus.setTextSize(10);
+        gamepadBar.addView(gamepadStatus, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        gamepadButton = new Button(this);
+        gamepadButton.setText("PAIR GAMEPAD");
+        gamepadButton.setTextSize(10);
+        gamepadBar.addView(gamepadButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)));
+        gamepadButton.setOnClickListener(v -> onGamepadButtonPressed());
+        root.addView(gamepadBar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+
+        FrameLayout videoFrame = new FrameLayout(this);
         surfaceView = new SurfaceView(this);
-        root.addView(surfaceView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        videoFrame.addView(surfaceView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         surfaceView.getHolder().addCallback(this);
-        surfaceView.setOnTouchListener(this::handleRemoteTouch);
+
+        gamepadOverlay = new GamepadOverlayView(this);
+        gamepadOverlay.setListener(new GamepadOverlayView.Listener() {
+            @Override
+            public void onGamepadState(int buttons, float leftX, float leftY) {
+                BluetoothHidGamepadApi28 controller = bluetoothGamepad;
+                if (controller != null && controller.isConnected()) {
+                    controller.sendState(buttons, leftX, leftY);
+                }
+            }
+
+            @Override
+            public void onDirectGesture(int type, float x1, float y1,
+                                        float x2, float y2, int durationMs) {
+                sendRemoteGesture(type, x1, y1, x2, y2, durationMs);
+            }
+        });
+        videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(videoFrame, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
 
         videoStatus = "Menghubungkan ke Host " + host + "...";
         updateStatus();
+    }
+
+    private void onGamepadButtonPressed() {
+        if (Build.VERSION.SDK_INT < 28) {
+            gamepadStatus.setText("Bluetooth Gamepad membutuhkan Android 9+ pada HP Viewer.");
+            return;
+        }
+
+        if (bluetoothGamepad != null && bluetoothGamepad.isRegistered()) {
+            showPairedHostDevices();
+            return;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            List<String> missing = new ArrayList<>();
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                    != PackageManager.PERMISSION_GRANTED) {
+                missing.add(Manifest.permission.BLUETOOTH_CONNECT);
+            }
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+                    != PackageManager.PERMISSION_GRANTED) {
+                missing.add(Manifest.permission.BLUETOOTH_ADVERTISE);
+            }
+            if (!missing.isEmpty()) {
+                requestPermissions(missing.toArray(new String[0]), REQUEST_BT_PERMISSION);
+                return;
+            }
+        }
+        ensureBluetoothEnabled();
+    }
+
+    private void ensureBluetoothEnabled() {
+        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+        if (adapter == null) {
+            gamepadStatus.setText("HP Viewer tidak memiliki Bluetooth.");
+            return;
+        }
+        try {
+            if (!adapter.isEnabled()) {
+                startActivityForResult(
+                        new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE),
+                        REQUEST_ENABLE_BT);
+                return;
+            }
+        } catch (SecurityException error) {
+            gamepadStatus.setText("Izin Bluetooth belum diberikan.");
+            return;
+        }
+        startBluetoothGamepadController();
+    }
+
+    private void startBluetoothGamepadController() {
+        if (bluetoothGamepad == null) {
+            bluetoothGamepad = new BluetoothHidGamepadApi28(this, message -> {
+                if (gamepadStatus != null) gamepadStatus.setText(message);
+                if (gamepadButton != null) {
+                    gamepadButton.setText(message.contains("TERHUBUNG")
+                            ? "GAMEPAD CONNECTED" : "PILIH HP HOST");
+                }
+            });
+        }
+        bluetoothGamepad.start();
+    }
+
+    private void showPairedHostDevices() {
+        if (bluetoothGamepad == null) return;
+        List<BluetoothDevice> devices = bluetoothGamepad.getBondedDevices();
+        if (devices.isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Pasangkan HP Host")
+                    .setMessage("Di HP yang menjadi Host, buka Pengaturan > Bluetooth. Pasangkan perangkat bernama 'OfflineMirror Gamepad'. Setelah berhasil dipasangkan, kembali ke Viewer dan tekan PILIH HP HOST.")
+                    .setPositiveButton("Mengerti", null)
+                    .show();
+            return;
+        }
+
+        String[] labels = new String[devices.size()];
+        for (int i = 0; i < devices.size(); i++) {
+            BluetoothDevice device = devices.get(i);
+            String name;
+            try {
+                name = device.getName();
+            } catch (SecurityException error) {
+                name = null;
+            }
+            labels[i] = (name == null || name.trim().isEmpty()
+                    ? "Perangkat Bluetooth " + (i + 1) : name)
+                    + "\\n" + device.getAddress();
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Pilih HP Host sebagai Gamepad")
+                .setItems(labels, (dialog, which) -> {
+                    if (which >= 0 && which < devices.size()) {
+                        bluetoothGamepad.connect(devices.get(which));
+                    }
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                           int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_BT_PERMISSION) {
+            boolean granted = grantResults.length > 0;
+            for (int result : grantResults) {
+                granted &= result == PackageManager.PERMISSION_GRANTED;
+            }
+            if (granted) {
+                ensureBluetoothEnabled();
+            } else if (gamepadStatus != null) {
+                gamepadStatus.setText("Izin Bluetooth diperlukan untuk Gamepad.");
+            }
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_ENABLE_BT) {
+            if (resultCode == RESULT_OK) {
+                startBluetoothGamepadController();
+            } else if (gamepadStatus != null) {
+                gamepadStatus.setText("Bluetooth tidak diaktifkan.");
+            }
+        } else if (requestCode == BluetoothHidGamepadApi28.REQUEST_DISCOVERABLE) {
+            if (resultCode > 0 && gamepadStatus != null) {
+                gamepadStatus.setText("HP Viewer terlihat. Pasangkan 'OfflineMirror Gamepad' dari HP Host.");
+            } else if (gamepadStatus != null) {
+                gamepadStatus.setText("Mode dapat ditemukan ditolak. Aktifkan Bluetooth pairing secara manual.");
+            }
+        }
     }
 
     private void enableImmersiveViewer() {
@@ -565,6 +757,7 @@ public class ViewerActivity extends Activity implements SurfaceHolder.Callback {
         stopReceiving();
         controlOutput = null;
         try { if (controlSocket != null) controlSocket.close(); } catch (Exception ignored) {}
+        if (bluetoothGamepad != null) bluetoothGamepad.close();
         super.onDestroy();
     }
 
