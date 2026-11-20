@@ -11,12 +11,11 @@ import android.view.View;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Transparent touch controller for Bluetooth HID and remote touch gestures. */
+/** On-screen virtual gamepad; input leaves the Viewer as Bluetooth HID only. */
 public final class GamepadOverlayView extends View {
     public interface Listener {
         void onGamepadState(int buttons, float leftX, float leftY,
                             float rightX, float rightY);
-        void onDirectGesture(int type, float x1, float y1, float x2, float y2, int durationMs);
     }
 
     // First ten bits map to standard HID buttons. D-pad bits are encoded as a HID hat switch.
@@ -54,14 +53,6 @@ public final class GamepadOverlayView extends View {
     }
 
     private float sizeScale() { return layoutPreset == 1 ? 0.78f : 1.0f; }
-
-    // The visible video is center-cropped to fill the viewer. These values map
-    // a visible touch back to the original stream, including a 90-degree rotation.
-    private float videoLeft;
-    private float videoTop;
-    private float videoWidth = -1f;
-    private float videoHeight = -1f;
-    private int videoRotation;
 
     private int buttons;
     private int leftStickPointer = -1;
@@ -107,39 +98,8 @@ public final class GamepadOverlayView extends View {
         buttons = 0;
         leftStickPointer = -1;
         rightStickPointer = -1;
-        directPointer = -1;
         leftAxisX = leftAxisY = rightAxisX = rightAxisY = 0f;
         emitState();
-    }
-
-    public void setVideoTransform(float left, float top, float width, float height,
-                                  int rotationDegrees) {
-        videoLeft = left;
-        videoTop = top;
-        videoWidth = Math.max(1f, width);
-        videoHeight = Math.max(1f, height);
-        videoRotation = rotationDegrees;
-    }
-
-    private boolean isInsideVideoContent(float x, float y) {
-        // The cropped image covers the complete viewer viewport.
-        return x >= 0f && y >= 0f && x <= getWidth() && y <= getHeight();
-    }
-
-    private float normalizeVideoX(float x, float y) {
-        float u = (x - videoLeft) / Math.max(1f, videoWidth);
-        float v = (y - videoTop) / Math.max(1f, videoHeight);
-        if (videoRotation == 90) return clamp(v);
-        if (videoRotation == -90) return clamp(1f - v);
-        return clamp(u);
-    }
-
-    private float normalizeVideoY(float x, float y) {
-        float u = (x - videoLeft) / Math.max(1f, videoWidth);
-        float v = (y - videoTop) / Math.max(1f, videoHeight);
-        if (videoRotation == 90) return clamp(1f - u);
-        if (videoRotation == -90) return clamp(u);
-        return clamp(v);
     }
 
     private float dp(float value) {
@@ -404,12 +364,6 @@ public final class GamepadOverlayView extends View {
             return;
         }
 
-        if (directPointer == -1 && isInsideVideoContent(x, y)) {
-            directPointer = pointerId;
-            directDownX = directLastX = x;
-            directDownY = directLastY = y;
-            directDownTime = event.getEventTime();
-        }
     }
 
     private void releasePointer(MotionEvent event, int index) {
@@ -430,30 +384,6 @@ public final class GamepadOverlayView extends View {
             rightAxisY = 0f;
             emitState();
         }
-        if (pointerId == directPointer) {
-            directLastX = event.getX(index);
-            directLastY = event.getY(index);
-            sendDirectGesture(event.getEventTime());
-            directPointer = -1;
-        }
-    }
-
-    private void sendDirectGesture(long eventTime) {
-        if (listener == null || getWidth() <= 0 || getHeight() <= 0) return;
-        float x1 = normalizeVideoX(directDownX, directDownY);
-        float y1 = normalizeVideoY(directDownX, directDownY);
-        float x2 = normalizeVideoX(directLastX, directLastY);
-        float y2 = normalizeVideoY(directLastX, directLastY);
-        long duration = Math.max(1, eventTime - directDownTime);
-        float distance = (float) Math.hypot(directLastX - directDownX,
-                directLastY - directDownY);
-        int type = distance >= dp(20) ? 3 : (duration >= 500 ? 2 : 1);
-        listener.onDirectGesture(type, x1, y1, x2, y2,
-                type == 1 ? 90 : (int) Math.min(1200, duration));
-    }
-
-    private float clamp(float value) {
-        return Math.max(0f, Math.min(1f, value));
     }
 
     @Override
@@ -488,13 +418,6 @@ public final class GamepadOverlayView extends View {
                     emitState();
                 }
             }
-            if (directPointer != -1) {
-                int i = event.findPointerIndex(directPointer);
-                if (i >= 0) {
-                    directLastX = event.getX(i);
-                    directLastY = event.getY(i);
-                }
-            }
             return true;
         }
 
@@ -508,7 +431,6 @@ public final class GamepadOverlayView extends View {
             buttons = 0;
             leftStickPointer = -1;
             rightStickPointer = -1;
-            directPointer = -1;
             leftAxisX = leftAxisY = rightAxisX = rightAxisY = 0f;
             emitState();
             return true;
