@@ -322,9 +322,9 @@ public class MainActivity extends Activity {
             image.setPadding(dp(8), dp(8), dp(8), dp(8));
             TextView details = new TextView(this);
             details.setText("Perangkat Host: " + Build.MODEL
-                    + "\\nIP Host: " + host + ":" + VIDEO_PORT
-                    + "\\nIP Viewer ditampilkan di HP pemindai."
-                    + "\\nKode pairing berlaku selama sesi ini. Jaga kerahasiaannya.");
+                    + "\nIP Host: " + host + ":" + VIDEO_PORT
+                    + "\nIP Viewer ditampilkan di HP pemindai."
+                    + "\nKode pairing berlaku selama sesi ini. Jaga kerahasiaannya.");
             details.setTextColor(Color.rgb(210, 218, 232));
             details.setPadding(dp(12), dp(4), dp(12), dp(12));
             LinearLayout content = new LinearLayout(this);
