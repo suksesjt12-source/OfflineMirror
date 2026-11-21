@@ -365,8 +365,10 @@ public class MainActivity extends Activity {
             image.setImageBitmap(qr);
             image.setBackgroundColor(Color.WHITE);
             image.setAdjustViewBounds(true);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            image.setPadding(dp(8), dp(8), dp(8), dp(8));
             content.addView(image, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(300)));
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(360)));
 
             TextView details = new TextView(this);
             details.setText("Viewer: pilih SCAN HOST QR dan arahkan kamera ke kode ini.\nHost IP: "
@@ -417,9 +419,17 @@ public class MainActivity extends Activity {
     }
 
     private void requestScreenCapture() {
-        MediaProjectionManager manager =
-                (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CAPTURE);
+        try {
+            MediaProjectionManager manager =
+                    (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+            if (manager == null) throw new IllegalStateException("MediaProjection tidak tersedia");
+            startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CAPTURE);
+        } catch (Exception error) {
+            setStatus("Tidak dapat meminta izin screen capture: " + error.getMessage());
+            Toast.makeText(this, "Screen capture tidak tersedia pada perangkat ini.",
+                    Toast.LENGTH_LONG).show();
+            android.util.Log.e("OfflineMirror", "Screen capture request failed", error);
+        }
     }
 
     private void connectToHost() {
@@ -610,11 +620,12 @@ public class MainActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_AUDIO) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 requestScreenCapture();
             } else {
-                audioCheck.setChecked(false);
+                if (audioCheck != null) audioCheck.setChecked(false);
                 Toast.makeText(this, "Audio permission denied. Starting screen-only mirroring.", Toast.LENGTH_LONG).show();
                 requestScreenCapture();
             }
