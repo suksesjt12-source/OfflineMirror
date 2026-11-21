@@ -91,7 +91,7 @@ public class MirrorHostService extends Service {
     private Thread videoThread;
     private Thread audioThread;
     private Thread controlThread;
-    private AudioRecord audioRecord;
+    private volatile AudioRecord audioRecord;
     private volatile int reportedCaptureWidth;
     private volatile int reportedCaptureHeight;
 
@@ -625,62 +625,86 @@ public class MirrorHostService extends Service {
     }
 
     private void serveAudio() {
-        DataOutputStream output = null;
-        try {
-            audioClientSocket = acceptAuthenticated(audioServerSocket, "audio");
-            audioClientSocket.setTcpNoDelay(true);
-            output = new DataOutputStream(new BufferedOutputStream(
-                    audioClientSocket.getOutputStream(), 32 * 1024));
+        while (running && audioServerSocket != null && !audioServerSocket.isClosed()) {
+            Socket client = null;
+            DataOutputStream output = null;
+            AudioRecord recorder = null;
+            try {
+                client = acceptAuthenticated(audioServerSocket, "audio");
+                client.setTcpNoDelay(true);
+                client.setKeepAlive(true);
+                audioClientSocket = client;
+                output = new DataOutputStream(new BufferedOutputStream(
+                        client.getOutputStream(), 32 * 1024));
 
-            final int sampleRate = 44100;
-            final int channelMask = AudioFormat.CHANNEL_IN_STEREO;
-            int minBytes = AudioRecord.getMinBufferSize(
-                    sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT);
-            int bufferBytes = Math.max(16384, minBytes > 0 ? minBytes * 2 : 32768);
+                final int sampleRate = 44100;
+                final int channelMask = AudioFormat.CHANNEL_IN_STEREO;
+                int minBytes = AudioRecord.getMinBufferSize(
+                        sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT);
+                if (minBytes == AudioRecord.ERROR || minBytes == AudioRecord.ERROR_BAD_VALUE) {
+                    throw new IllegalStateException("Format capture audio tidak didukung");
+                }
+                int bufferBytes = Math.max(16384, minBytes > 0 ? minBytes * 2 : 32768);
 
-            AudioPlaybackCaptureConfigurationCompat config =
-                    new AudioPlaybackCaptureConfigurationCompat(projection);
-            AudioFormat format = new AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(channelMask)
-                    .build();
+                AudioPlaybackCaptureConfigurationCompat config =
+                        new AudioPlaybackCaptureConfigurationCompat(projection);
+                AudioFormat format = new AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(channelMask)
+                        .build();
 
-            audioRecord = new AudioRecord.Builder()
-                    .setAudioFormat(format)
-                    .setBufferSizeInBytes(bufferBytes)
-                    .setAudioPlaybackCaptureConfig(config.build())
-                    .build();
+                recorder = new AudioRecord.Builder()
+                        .setAudioFormat(format)
+                        .setBufferSizeInBytes(bufferBytes)
+                        .setAudioPlaybackCaptureConfig(config.build())
+                        .build();
+                audioRecord = recorder;
 
-            if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
-                throw new IllegalStateException("Playback capture could not initialize");
+                if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
+                    throw new IllegalStateException("Playback capture could not initialize");
+                }
+
+                output.writeInt(sampleRate);
+                output.writeInt(2);
+                output.writeInt(AudioFormat.ENCODING_PCM_16BIT);
+                output.flush();
+
+                byte[] buffer = new byte[8192];
+                recorder.startRecording();
+                while (running && !client.isClosed()) {
+                    int count = recorder.read(buffer, 0, buffer.length, AudioRecord.READ_BLOCKING);
+                    if (count == AudioRecord.ERROR_DEAD_OBJECT || count == AudioRecord.ERROR_INVALID_OPERATION
+                            || count == AudioRecord.ERROR_BAD_VALUE) {
+                        throw new IOException("AudioRecord read failed: " + count);
+                    }
+                    if (count > 0) {
+                        output.writeInt(count);
+                        output.write(buffer, 0, count);
+                        output.flush();
+                    }
+                }
+            } catch (Exception error) {
+                if (running) android.util.Log.w("OfflineMirror",
+                        "Audio capture/client interrupted; waiting for reconnect: "
+                                + error.getMessage());
+            } finally {
+                if (audioRecord == recorder) audioRecord = null;
+                if (recorder != null) {
+                    try { recorder.stop(); } catch (Exception ignored) {}
+                    try { recorder.release(); } catch (Exception ignored) {}
+                }
+                try { if (output != null) output.close(); } catch (Exception ignored) {}
+                try { if (client != null) client.close(); } catch (Exception ignored) {}
+                if (audioClientSocket == client) audioClientSocket = null;
             }
-
-            output.writeInt(sampleRate);
-            output.writeInt(2);
-            output.writeInt(AudioFormat.ENCODING_PCM_16BIT);
-            output.flush();
-
-            byte[] buffer = new byte[8192];
-            audioRecord.startRecording();
-            while (running && audioClientSocket != null && !audioClientSocket.isClosed()) {
-                int count = audioRecord.read(buffer, 0, buffer.length, AudioRecord.READ_BLOCKING);
-                if (count > 0) {
-                    output.writeInt(count);
-                    output.write(buffer, 0, count);
-                    output.flush();
+            if (running) {
+                try { Thread.sleep(1000L); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
                 }
             }
-        } catch (Exception error) {
-            if (running) android.util.Log.w("OfflineMirror", "Audio capture unavailable: " + error.getMessage());
-        } finally {
-            if (audioRecord != null) {
-                try { audioRecord.stop(); } catch (Exception ignored) {}
-                try { audioRecord.release(); } catch (Exception ignored) {}
-                audioRecord = null;
-            }
-            try { if (output != null) output.close(); } catch (Exception ignored) {}
-            try { if (audioClientSocket != null) audioClientSocket.close(); } catch (Exception ignored) {}
         }
     }
 
