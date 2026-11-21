@@ -69,11 +69,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private MouseOverlayView mouseOverlay;
     private Button layoutToolButton;
     private boolean layoutEditMode;
-    private boolean mouseWasHiddenBeforeLayout;
     private boolean gamepadWasHiddenBeforeLayout;
-    private boolean mousePositionSaved;
-    private float mousePositionX = 0.5f;
-    private float mousePositionY = 0.08f;
     private volatile long receiveGeneration;
     private volatile String bluetoothStatus =
             "Bluetooth HID belum tersambung • tekan PAIR BT";
@@ -129,12 +125,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 preferences.getInt("mouse_scroll_up_sensitivity", 1)));
         scrollDownSensitivity = Math.max(1, Math.min(10,
                 preferences.getInt("mouse_scroll_down_sensitivity", 1)));
-        float savedGamepadX = preferences.getFloat("gamepad_offset_x", 0f);
-        float savedGamepadY = preferences.getFloat("gamepad_offset_y", 0f);
-        mousePositionSaved = preferences.contains("mouse_position_x")
-                && preferences.contains("mouse_position_y");
-        mousePositionX = preferences.getFloat("mouse_position_x", 0.5f);
-        mousePositionY = preferences.getFloat("mouse_position_y", 0.08f);
         videoPort = getIntent().getIntExtra("videoPort", VIDEO_PORT);
         audioPort = getIntent().getIntExtra("audioPort", AUDIO_PORT);
         controlPort = getIntent().getIntExtra("controlPort", CONTROL_PORT);
@@ -192,17 +182,20 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         videoFrame.addOnLayoutChangeListener((view, left, top, right, bottom,
                                                oldLeft, oldTop, oldRight, oldBottom) -> {
             updateVideoSurfaceLayout();
-            applyStoredMousePosition();
         });
 
         gamepadOverlay = new GamepadOverlayView(this);
         gamepadOverlay.setSensitivity(gamepadSensitivity);
         gamepadOverlay.setLayoutPreset(gamepadPreset);
-        gamepadOverlay.setPositionOffset(savedGamepadX, savedGamepadY);
-        gamepadOverlay.setLayoutChangedListener((x, y) ->
-                getSharedPreferences("offline_mirror_settings", MODE_PRIVATE).edit()
-                        .putFloat("gamepad_offset_x", x)
-                        .putFloat("gamepad_offset_y", y).apply());
+        for (int elementId : GamepadOverlayView.LAYOUT_ELEMENT_IDS) {
+            float x = preferences.getFloat("gamepad_element_" + elementId + "_x", 0f);
+            float y = preferences.getFloat("gamepad_element_" + elementId + "_y", 0f);
+            gamepadOverlay.setElementOffset(elementId, x, y);
+        }
+        gamepadOverlay.setLayoutChangedListener((elementId, x, y) ->
+                preferences.edit()
+                        .putFloat("gamepad_element_" + elementId + "_x", x)
+                        .putFloat("gamepad_element_" + elementId + "_y", y).apply());
         gamepadOverlay.setListener(new GamepadOverlayView.Listener() {
             @Override
             public void onGamepadState(int buttons, float leftX, float leftY,
@@ -213,20 +206,16 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             }
 
         });
-        videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         mouseOverlay = new MouseOverlayView(this);
         mouseOverlay.setScrollSensitivity(scrollUpSensitivity, scrollDownSensitivity);
         mouseOverlay.setListener((dx, dy, buttons, wheel) -> {
             if (bluetoothGamepad != null) bluetoothGamepad.sendMouse(dx, dy, buttons, wheel);
         });
-        mouseOverlay.setLayoutMoveListener((dx, dy) -> moveMouseOverlay(dx, dy));
         mouseOverlay.setVisibility(View.GONE);
-        FrameLayout.LayoutParams mouseParams = new FrameLayout.LayoutParams(
-                dp(304), dp(136), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        mouseParams.topMargin = dp(48);
-        videoFrame.addView(mouseOverlay, mouseParams);
-        mouseOverlay.post(this::applyStoredMousePosition);
+        videoFrame.addView(mouseOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         videoFrame.setClipChildren(true);
         videoFrame.setClipToPadding(true);
         root.addView(videoFrame, new FrameLayout.LayoutParams(
@@ -244,7 +233,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         toolsBar.setOrientation(LinearLayout.HORIZONTAL);
         toolsBar.setGravity(Gravity.CENTER);
         toolsBar.setBackgroundColor(0xBB111923);
-        String[] toolNames = {"SETTINGS", "BLUETOOTH", "MOUSE", "LAYOUT", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
+        String[] toolNames = {"SETTINGS", "BLUETOOTH", "MOUSE", "SCROLL ↑", "SCROLL ↓",
+                "LAYOUT", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
         Button settingsTool = null;
         Button mouseTool = null;
         Button layoutTool = null;
@@ -262,6 +252,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             if ("SETTINGS".equals(toolName)) settingsTool = tool;
             else if ("BLUETOOTH".equals(toolName)) bluetoothButton = tool;
             else if ("MOUSE".equals(toolName)) mouseTool = tool;
+            else if ("SCROLL ↑".equals(toolName)) tool.setOnClickListener(v -> sendMouseScroll(1));
+            else if ("SCROLL ↓".equals(toolName)) tool.setOnClickListener(v -> sendMouseScroll(-1));
             else if ("LAYOUT".equals(toolName)) layoutTool = tool;
             else if ("VOL -".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 1));
             else if ("VOL +".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 2));
@@ -741,9 +733,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     }
 
     /**
-     * TextureView lets the decoded image be transformed independently of the
-     * View bounds. Map the full texture to a centered, aspect-correct crop:
-     * no non-uniform stretching, with only the excess edges cropped.
+     * Fit the complete decoded frame inside the full-screen Viewer bounds.
+     * Aspect ratio is preserved; unused edges remain black instead of cropping content.
      */
     private void setStreamDimensions(StreamConfig config) {
         streamWidth = config.width;
@@ -772,11 +763,11 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             return;
         }
 
-        // Host orientation is applied to this Activity when each stream header
-        // arrives. Keep decoded pixels upright; only scale/crop to the Viewer bounds.
+        // Host orientation is applied when each stream header arrives.
+        // Fit the complete frame; never crop its top, bottom or sides.
         float displaySourceWidth = streamWidth;
         float displaySourceHeight = streamHeight;
-        float scale = Math.max(
+        float scale = Math.min(
                 (float) viewWidth / displaySourceWidth,
                 (float) viewHeight / displaySourceHeight);
         float targetWidth = displaySourceWidth * scale;
@@ -786,8 +777,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         float right = left + targetWidth;
         float bottom = top + targetHeight;
 
-        // TextureView initially maps its buffer into the View rectangle. This
-        // matrix maps that rectangle into the correctly proportioned crop.
+        // TextureView initially maps its buffer into the View rectangle. Map
+        // it into a centered fit rectangle so the entire source stays visible.
         float[] source = {
                 0f, 0f,
                 viewWidth, 0f,
@@ -954,57 +945,30 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         return rendered;
     }
 
-    private void moveMouseOverlay(float dx, float dy) {
-        if (videoFrame == null || mouseOverlay == null) return;
-        int maxX = Math.max(0, videoFrame.getWidth() - mouseOverlay.getWidth());
-        int maxY = Math.max(0, videoFrame.getHeight() - mouseOverlay.getHeight());
-        int left = Math.max(0, Math.min(maxX, Math.round(mouseOverlay.getX() + dx)));
-        int top = Math.max(0, Math.min(maxY, Math.round(mouseOverlay.getY() + dy)));
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) mouseOverlay.getLayoutParams();
-        params.gravity = Gravity.TOP | Gravity.LEFT;
-        params.leftMargin = left;
-        params.topMargin = top;
-        videoFrame.updateViewLayout(mouseOverlay, params);
-        mousePositionX = maxX == 0 ? 0f : left / (float) maxX;
-        mousePositionY = maxY == 0 ? 0f : top / (float) maxY;
-        mousePositionSaved = true;
-        getSharedPreferences("offline_mirror_settings", MODE_PRIVATE).edit()
-                .putFloat("mouse_position_x", mousePositionX)
-                .putFloat("mouse_position_y", mousePositionY).apply();
-    }
-
-    private void applyStoredMousePosition() {
-        if (!mousePositionSaved || videoFrame == null || mouseOverlay == null
-                || videoFrame.getWidth() <= 0 || videoFrame.getHeight() <= 0
-                || mouseOverlay.getWidth() <= 0 || mouseOverlay.getHeight() <= 0) return;
-        int maxX = Math.max(0, videoFrame.getWidth() - mouseOverlay.getWidth());
-        int maxY = Math.max(0, videoFrame.getHeight() - mouseOverlay.getHeight());
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) mouseOverlay.getLayoutParams();
-        params.gravity = Gravity.TOP | Gravity.LEFT;
-        params.leftMargin = Math.round(Math.max(0f, Math.min(1f, mousePositionX)) * maxX);
-        params.topMargin = Math.round(Math.max(0f, Math.min(1f, mousePositionY)) * maxY);
-        videoFrame.updateViewLayout(mouseOverlay, params);
+    private void sendMouseScroll(int direction) {
+        if (bluetoothGamepad == null) {
+            Toast.makeText(this, "Hubungkan Bluetooth HID terlebih dahulu.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        int amount = direction > 0 ? scrollUpSensitivity : scrollDownSensitivity;
+        bluetoothGamepad.sendMouse(0, 0, 0, direction * amount);
     }
 
     private void toggleLayoutEditMode(Button button) {
         layoutEditMode = !layoutEditMode;
         if (layoutEditMode) {
             gamepadWasHiddenBeforeLayout = gamepadOverlay.getVisibility() != View.VISIBLE;
-            mouseWasHiddenBeforeLayout = mouseOverlay.getVisibility() != View.VISIBLE;
             gamepadOverlay.setVisibility(View.VISIBLE);
-            mouseOverlay.setVisibility(View.VISIBLE);
             gamepadOverlay.setLayoutEditMode(true);
-            mouseOverlay.setLayoutEditMode(true);
             button.setText("SELESAI");
-            Toast.makeText(this, "Seret gamepad atau panel mouse ke posisi baru.",
+            Toast.makeText(this,
+                    "Seret setiap tombol, arah D-pad, atau analog secara terpisah.",
                     Toast.LENGTH_LONG).show();
         } else {
             gamepadOverlay.setLayoutEditMode(false);
-            mouseOverlay.setLayoutEditMode(false);
             if (gamepadWasHiddenBeforeLayout) gamepadOverlay.setVisibility(View.GONE);
-            if (mouseWasHiddenBeforeLayout) mouseOverlay.setVisibility(View.GONE);
             button.setText("LAYOUT");
-            Toast.makeText(this, "Posisi kontrol disimpan.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Posisi tiap kontrol disimpan.", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -1206,12 +1170,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 if (gamepadWasHiddenBeforeLayout && gamepadOverlay != null) {
                     gamepadOverlay.setVisibility(View.GONE);
                 }
-                if (mouseWasHiddenBeforeLayout && mouseOverlay != null) {
-                    mouseOverlay.setVisibility(View.GONE);
-                }
             }
             if (gamepadOverlay != null) gamepadOverlay.setLayoutEditMode(false);
-            if (mouseOverlay != null) mouseOverlay.setLayoutEditMode(false);
         }
     }
 
@@ -1224,7 +1184,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         if (mouseOverlay != null) mouseOverlay.releaseAllInputs();
         if (bluetoothGamepad != null) bluetoothGamepad.stop();
         if (gamepadOverlay != null) gamepadOverlay.setLayoutEditMode(false);
-        if (mouseOverlay != null) mouseOverlay.setLayoutEditMode(false);
         stopReceiving();
         controlOutput = null;
         try { if (controlSocket != null) controlSocket.close(); } catch (Exception ignored) {}

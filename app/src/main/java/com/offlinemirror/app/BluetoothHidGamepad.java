@@ -26,8 +26,7 @@ public final class BluetoothHidGamepad {
 
     /*
      * Report 1: Android Game Pad collection.
-     * Button usage IDs intentionally follow Android's controller mapping:
-     * 1=A, 2=B, 4=X, 5=Y, 7=L1, 8=R1, 9=L2, 10=R2, 11=Select, 12=Start.
+     * Existing button usages are preserved; usages 13/14 add L3/R3 stick clicks.
      * D-pad is a HID hat; X/Y and Z/Rz are the two sticks; C5/C4 are triggers.
      *
      * Report 2: separate relative Mouse collection (buttons, X, Y, wheel).
@@ -39,10 +38,10 @@ public final class BluetoothHidGamepad {
         0x05, 0x09,
         0x09, 0x01, 0x09, 0x02, 0x09, 0x04, 0x09, 0x05,
         0x09, 0x07, 0x09, 0x08, 0x09, 0x09, 0x09, 0x0A,
-        0x09, 0x0B, 0x09, 0x0C,
+        0x09, 0x0B, 0x09, 0x0C, 0x09, 0x0D, 0x09, 0x0E,
         0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
-        (byte) 0x95, 0x0A, (byte) 0x81, 0x02,
-        0x75, 0x06, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
+        (byte) 0x95, 0x0C, (byte) 0x81, 0x02,
+        0x75, 0x04, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
 
         0x05, 0x01, 0x09, 0x39,
         0x15, 0x00, 0x25, 0x08, 0x35, 0x00,
@@ -378,9 +377,11 @@ public final class BluetoothHidGamepad {
             int buttons, float lx, float ly, float rx, float ry) {
         byte[] report = new byte[9];
         int mask = buttons & 0x03FF;
+        if ((buttons & (1 << 14)) != 0) mask |= (1 << 10); // L3
+        if ((buttons & (1 << 15)) != 0) mask |= (1 << 11); // R3
 
         report[0] = (byte) (mask & 0xFF);
-        report[1] = (byte) ((mask >>> 8) & 0x03);
+        report[1] = (byte) ((mask >>> 8) & 0x0F);
         report[2] = (byte) hatValue(buttons);
         report[3] = toAxis(lx); // X
         report[4] = toAxis(ly); // Y

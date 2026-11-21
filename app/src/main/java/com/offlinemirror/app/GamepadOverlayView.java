@@ -7,557 +7,310 @@ import android.graphics.Typeface;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
-
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 
-/** On-screen virtual gamepad; input leaves the Viewer as Bluetooth HID only. */
+/** Individually movable touch controls which emit standard Bluetooth HID gamepad state. */
 public final class GamepadOverlayView extends View {
     public interface Listener {
-        void onGamepadState(int buttons, float leftX, float leftY,
-                            float rightX, float rightY);
+        void onGamepadState(int buttons, float leftX, float leftY, float rightX, float rightY);
     }
-
     public interface LayoutChangedListener {
-        void onPositionChanged(float offsetX, float offsetY);
+        void onElementPositionChanged(int elementId, float offsetX, float offsetY);
     }
 
-    // First ten bits map to standard HID buttons. D-pad bits are encoded as a HID hat switch.
-    private static final int BUTTON_A = 1 << 0;
-    private static final int BUTTON_B = 1 << 1;
-    private static final int BUTTON_X = 1 << 2;
-    private static final int BUTTON_Y = 1 << 3;
-    private static final int BUTTON_L1 = 1 << 4;
-    private static final int BUTTON_R1 = 1 << 5;
-    private static final int BUTTON_L2 = 1 << 6;
-    private static final int BUTTON_R2 = 1 << 7;
-    private static final int BUTTON_SELECT = 1 << 8;
-    private static final int BUTTON_START = 1 << 9;
-    private static final int BUTTON_DPAD_UP = 1 << 10;
-    private static final int BUTTON_DPAD_DOWN = 1 << 11;
-    private static final int BUTTON_DPAD_LEFT = 1 << 12;
-    private static final int BUTTON_DPAD_RIGHT = 1 << 13;
+    public static final int BUTTON_A=1, BUTTON_B=2, BUTTON_X=4, BUTTON_Y=8;
+    public static final int BUTTON_L1=16, BUTTON_R1=32, BUTTON_L2=64, BUTTON_R2=128;
+    public static final int BUTTON_SELECT=256, BUTTON_START=512;
+    public static final int BUTTON_DPAD_UP=1024, BUTTON_DPAD_DOWN=2048;
+    public static final int BUTTON_DPAD_LEFT=4096, BUTTON_DPAD_RIGHT=8192;
+    public static final int BUTTON_L3=16384, BUTTON_R3=32768;
+    public static final int ELEMENT_LEFT_STICK=-1, ELEMENT_RIGHT_STICK=-2;
+    public static final int[] LAYOUT_ELEMENT_IDS={
+        BUTTON_A,BUTTON_B,BUTTON_X,BUTTON_Y,BUTTON_L1,BUTTON_L2,BUTTON_R1,BUTTON_R2,
+        BUTTON_SELECT,BUTTON_START,BUTTON_DPAD_UP,BUTTON_DPAD_DOWN,BUTTON_DPAD_LEFT,
+        BUTTON_DPAD_RIGHT,BUTTON_L3,BUTTON_R3,ELEMENT_LEFT_STICK,ELEMENT_RIGHT_STICK
+    };
 
-    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Map<Integer, Integer> buttonPointers = new HashMap<>();
+    private final Paint fill=new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint stroke=new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint label=new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Map<Integer,Integer> buttonPointers=new HashMap<>();
+    private final Map<Integer,float[]> offsets=new HashMap<>();
     private Listener listener;
-    private float sensitivity = 1.0f;
-    private int layoutPreset = 0;
-    private float positionOffsetX, positionOffsetY;
-    private boolean layoutEditMode;
-    private int movePointer = -1;
-    private float moveLastX, moveLastY;
-    private LayoutChangedListener layoutChangedListener;
-
-    public void setSensitivity(float value) {
-        sensitivity = Math.max(0.5f, Math.min(1.8f, value));
-    }
-
-    /** 0 = Classic, 1 = Compact, 2 = Left-handed. */
-    public void setLayoutPreset(int preset) {
-        layoutPreset = Math.max(0, Math.min(2, preset));
-        invalidate();
-    }
-
-    private float sizeScale() { return layoutPreset == 1 ? 0.78f : 1.0f; }
-
-    public void setLayoutChangedListener(LayoutChangedListener listener) {
-        layoutChangedListener = listener;
-    }
-    public void setPositionOffset(float x, float y) {
-        positionOffsetX = Math.max(-0.18f, Math.min(0.18f, x));
-        positionOffsetY = Math.max(-0.16f, Math.min(0.16f, y));
-        invalidate();
-    }
-    public float getPositionOffsetX() { return positionOffsetX; }
-    public float getPositionOffsetY() { return positionOffsetY; }
-    public void setLayoutEditMode(boolean enabled) {
-        layoutEditMode = enabled;
-        movePointer = -1;
-        if (enabled) releaseAllInputs();
-        invalidate();
-    }
-    private float offsetX() { return getWidth() * positionOffsetX; }
-    private float offsetY() { return getHeight() * positionOffsetY; }
-
+    private LayoutChangedListener layoutListener;
+    private float sensitivity=1f;
+    private int layoutPreset;
     private int buttons;
-    private int leftStickPointer = -1;
-    private int rightStickPointer = -1;
-    private float leftAxisX;
-    private float leftAxisY;
-    private float rightAxisX;
-    private float rightAxisY;
-    public GamepadOverlayView(Context context) {
-        super(context);
-        init();
-    }
+    private int leftPointer=-1,rightPointer=-1,editPointer=-1,editElement;
+    private float leftX,leftY,rightX,rightY,editLastX,editLastY;
+    private boolean editMode;
 
-    public GamepadOverlayView(Context context, AttributeSet attrs) {
-        super(context, attrs);
-        init();
-    }
-
-    private void init() {
-        setLayerType(View.LAYER_TYPE_HARDWARE, null);
-        fill.setStyle(Paint.Style.FILL);
-        stroke.setStyle(Paint.Style.STROKE);
-        stroke.setStrokeWidth(dp(2));
-        label.setColor(0xFFF4F7FC);
+    public GamepadOverlayView(Context c){super(c);init();}
+    public GamepadOverlayView(Context c,AttributeSet a){super(c,a);init();}
+    private void init(){
+        setLayerType(View.LAYER_TYPE_HARDWARE,null);
+        fill.setStyle(Paint.Style.FILL); stroke.setStyle(Paint.Style.STROKE);
+        stroke.setStrokeWidth(dp(2)); label.setColor(0xFFF4F7FC);
         label.setTextAlign(Paint.Align.CENTER);
-        label.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        label.setTypeface(Typeface.create("sans-serif",Typeface.BOLD));
         setClickable(true);
+        setContentDescription("Virtual gamepad. Mode LAYOUT dapat memindahkan setiap tombol satu per satu.");
     }
-
-    public void setListener(Listener listener) {
-        this.listener = listener;
+    private float dp(float v){return v*getResources().getDisplayMetrics().density;}
+    private float clamp(float v,float lo,float hi){return Math.max(lo,Math.min(hi,v));}
+    public void setListener(Listener l){listener=l;}
+    public void setLayoutChangedListener(LayoutChangedListener l){layoutListener=l;}
+    public void setSensitivity(float v){sensitivity=clamp(v,0.5f,1.8f);}
+    public void setLayoutPreset(int p){layoutPreset=Math.max(0,Math.min(2,p));invalidate();}
+    public void setLayoutEditMode(boolean enabled){
+        editMode=enabled;editPointer=-1;editElement=0;
+        if(enabled)releaseAllInputs();invalidate();
     }
-
-    public void releaseAllInputs() {
-        buttonPointers.clear();
-        buttons = 0;
-        leftStickPointer = -1;
-        rightStickPointer = -1;
-        leftAxisX = leftAxisY = rightAxisX = rightAxisY = 0f;
-        emitState();
+    private float[] offset(int id){
+        float[] v=offsets.get(id);return v==null?new float[]{0f,0f}:v;
     }
-
-    private float dp(float value) {
-        return value * getResources().getDisplayMetrics().density;
+    private float[] basePoint(int id){
+        if(id==ELEMENT_LEFT_STICK)return new float[]{baseLeftX(),stickY()};
+        if(id==ELEMENT_RIGHT_STICK)return new float[]{baseRightX(),stickY()};
+        if(id==BUTTON_L3)return new float[]{baseLeftX(),stickY()-dp(62)};
+        if(id==BUTTON_R3)return new float[]{baseRightX(),stickY()-dp(62)};
+        if(isDpad(id)){
+            float x=baseDpadX(),y=baseDpadY(),o=dpadRadius()*2.05f;
+            if(id==BUTTON_DPAD_LEFT)x-=o;
+            if(id==BUTTON_DPAD_RIGHT)x+=o;
+            if(id==BUTTON_DPAD_UP)y-=o;
+            if(id==BUTTON_DPAD_DOWN)y+=o;
+            return new float[]{x,y};
+        }
+        return new float[]{baseButtonX(id),baseButtonY(id)};
     }
-
-    private boolean isLandscapeLayout() {
-        return getWidth() > getHeight();
+    private float[] point(int id){
+        float[] b=basePoint(id),o=offset(id);
+        return new float[]{b[0]+o[0]*getWidth(),b[1]+o[1]*getHeight()};
     }
-
-    private float leftStickCenterX() {
-        if (layoutPreset == 2) return getWidth() * 0.82f + offsetX();
-        return getWidth() * (isLandscapeLayout() ? 0.14f : 0.18f) + offsetX();    }
-
-    private float rightStickCenterX() {
-        if (layoutPreset == 2) return getWidth() * (isLandscapeLayout() ? 0.32f : 0.48f) + offsetX();
-        return getWidth() * (isLandscapeLayout() ? 0.66f : 0.52f) + offsetX();    }
-
-    private float stickCenterY() {
-        return getHeight() * (isLandscapeLayout() ? 0.81f : 0.84f) + offsetY();    }
-
-    private float dpadCenterX() {
-        return getWidth() * (layoutPreset == 2 ? 0.82f : (isLandscapeLayout() ? 0.14f : 0.18f)) + offsetX();    }
-
-    private float dpadCenterY() {
-        // Keep the D-pad hit area clear of the left analog stick.
-        return getHeight() * (isLandscapeLayout() ? 0.44f : 0.48f) + offsetY();    }
-
-    private float dpadRadius() {
-        return Math.min(dp(20) * sizeScale(), Math.min(getWidth(), getHeight()) * 0.05f);
+    public void setElementOffset(int id,float x,float y){
+        if(getWidth()>0&&getHeight()>0){
+            float[] b=basePoint(id);float m=dp(24);
+            float px=clamp(b[0]+x*getWidth(),m,getWidth()-m);
+            float py=clamp(b[1]+y*getHeight(),m,getHeight()-m);
+            x=(px-b[0])/getWidth();y=(py-b[1])/getHeight();
+        }
+        offsets.put(id,new float[]{x,y});invalidate();
     }
-
-    private float dpadOffset() {
-        return dpadRadius() * 1.22f;
-    }
-
-    private float dpadX(int bit) {
-        float center = dpadCenterX();
-        if (bit == BUTTON_DPAD_LEFT) return center - dpadOffset();
-        if (bit == BUTTON_DPAD_RIGHT) return center + dpadOffset();
-        return center;
-    }
-
-    private float dpadY(int bit) {
-        float center = dpadCenterY();
-        if (bit == BUTTON_DPAD_UP) return center - dpadOffset();
-        if (bit == BUTTON_DPAD_DOWN) return center + dpadOffset();
-        return center;
-    }
-
-    private float stickRadius() {
-        float shortSide = Math.min(getWidth(), getHeight());
-        return Math.min(dp(45) * sizeScale(), shortSide * 0.13f);
-    }
-
-    private float actionRadius() {
-        return Math.min(dp(21) * sizeScale(), Math.min(getWidth(), getHeight()) * 0.055f);
-    }
-
-    private float buttonX(int bit) {
+    public float getElementOffsetX(int id){return offset(id)[0];}
+    public float getElementOffsetY(int id){return offset(id)[1];}
+    private boolean landscape(){return getWidth()>getHeight();}
+    private boolean compact(){return layoutPreset==1;}
+    private boolean leftHanded(){return layoutPreset==2;}
+    private boolean isDpad(int b){return b==BUTTON_DPAD_UP||b==BUTTON_DPAD_DOWN||b==BUTTON_DPAD_LEFT||b==BUTTON_DPAD_RIGHT;}
+    private float baseLeftX(){return getWidth()*(leftHanded()?0.82f:(landscape()?0.14f:0.18f));}
+    private float baseRightX(){return getWidth()*(leftHanded()?(landscape()?0.32f:0.48f):(landscape()?0.66f:0.52f));}
+    private float stickY(){return getHeight()*(landscape()?0.82f:0.84f);}
+    private float baseDpadX(){return baseLeftX();}
+    private float baseDpadY(){return getHeight()*(landscape()?0.39f:0.41f);}
+    private float scale(){return compact()?0.78f:1f;}
+    private float dpadRadius(){return Math.min(dp(19)*scale(),Math.min(getWidth(),getHeight())*0.048f);}
+    private float stickRadius(){return Math.min(dp(44)*scale(),Math.min(getWidth(),getHeight())*0.125f);}
+    private float actionRadius(){return Math.min(dp(21)*scale(),Math.min(getWidth(),getHeight())*0.052f);}
+    private float baseButtonX(int bit){
         float x;
-        if (bit == BUTTON_A || bit == BUTTON_Y) {
-            x = getWidth() * (isLandscapeLayout() ? 0.88f : 0.84f);
-        } else if (bit == BUTTON_B) {
-            x = getWidth() * 0.94f;
-        } else if (bit == BUTTON_X) {
-            x = getWidth() * (isLandscapeLayout() ? 0.82f : 0.76f);
-        } else if (bit == BUTTON_L1) {
-            x = getWidth() * 0.10f;
-        } else if (bit == BUTTON_L2) {
-            x = getWidth() * 0.27f;
-        } else if (bit == BUTTON_SELECT) {
-            x = getWidth() * (isLandscapeLayout() ? 0.40f : 0.39f);
-        } else if (bit == BUTTON_START) {
-            x = getWidth() * (isLandscapeLayout() ? 0.60f : 0.61f);
-        } else if (bit == BUTTON_R2) {
-            x = getWidth() * 0.73f;
-        } else if (bit == BUTTON_R1) {
-            x = getWidth() * 0.90f;
-        } else {
-            x = getWidth() * 0.88f;
-        }
-        return (layoutPreset == 2 ? getWidth() - x : x) + offsetX();    }
-
-    private float buttonY(int bit) {
-        float y;
-        if (isLandscapeLayout()) {
-            if (bit == BUTTON_Y) y = getHeight() * 0.65f;
-            else if (bit == BUTTON_A) y = getHeight() * 0.87f;
-            else if (bit == BUTTON_X || bit == BUTTON_B) y = getHeight() * 0.76f;
-            else y = getHeight() * 0.10f;
-        } else {
-            if (bit == BUTTON_Y) y = getHeight() * 0.56f;
-            else if (bit == BUTTON_X || bit == BUTTON_B) y = getHeight() * 0.65f;
-            else if (bit == BUTTON_A) y = getHeight() * 0.74f;
-            else y = getHeight() * 0.08f;
-        }
-        return y + offsetY();
+        if(bit==BUTTON_A||bit==BUTTON_Y)x=getWidth()*(landscape()?0.88f:0.84f);
+        else if(bit==BUTTON_B)x=getWidth()*0.94f;
+        else if(bit==BUTTON_X)x=getWidth()*(landscape()?0.82f:0.76f);
+        else if(bit==BUTTON_L1)x=getWidth()*0.10f;
+        else if(bit==BUTTON_L2)x=getWidth()*0.27f;
+        else if(bit==BUTTON_SELECT)x=getWidth()*(landscape()?0.40f:0.39f);
+        else if(bit==BUTTON_START)x=getWidth()*(landscape()?0.60f:0.61f);
+        else if(bit==BUTTON_R2)x=getWidth()*0.73f;
+        else x=getWidth()*0.90f;
+        return leftHanded()?getWidth()-x:x;
     }
+    private float baseButtonY(int bit){
+        if(landscape()){
+            if(bit==BUTTON_Y)return getHeight()*0.65f;
+            if(bit==BUTTON_A)return getHeight()*0.87f;
+            if(bit==BUTTON_X||bit==BUTTON_B)return getHeight()*0.76f;
+            return getHeight()*0.10f;
+        }
+        if(bit==BUTTON_Y)return getHeight()*0.56f;
+        if(bit==BUTTON_X||bit==BUTTON_B)return getHeight()*0.65f;
+        if(bit==BUTTON_A)return getHeight()*0.74f;
+        return getHeight()*0.08f;
+    }
+    private float leftCX(){return point(ELEMENT_LEFT_STICK)[0];}
+    private float rightCX(){return point(ELEMENT_RIGHT_STICK)[0];}
+    private float stickCY(){return point(ELEMENT_LEFT_STICK)[1];}
+    private float rightStickCY(){return point(ELEMENT_RIGHT_STICK)[1];}
+    private float bx(int bit){return point(bit)[0];}
+    private float by(int bit){return point(bit)[1];}
+    private float dx(int bit){return point(bit)[0];}
+    private float dy(int bit){return point(bit)[1];}
 
-    @Override
-    protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
-        if (getWidth() == 0 || getHeight() == 0) return;
-
-        drawStick(canvas, leftStickCenterX(), stickCenterY(), leftAxisX, leftAxisY, "L");
-        drawStick(canvas, rightStickCenterX(), stickCenterY(), rightAxisX, rightAxisY, "R");
-
-        drawDpad(canvas);
-        drawAction(canvas, BUTTON_Y, "Y");
-        drawAction(canvas, BUTTON_X, "X");
-        drawAction(canvas, BUTTON_B, "B");
-        drawAction(canvas, BUTTON_A, "A");
-
-        drawPill(canvas, BUTTON_L1, "L1");
-        drawPill(canvas, BUTTON_L2, "L2");
-        drawPill(canvas, BUTTON_SELECT, "SELECT");
-        drawPill(canvas, BUTTON_START, "START");
-        drawPill(canvas, BUTTON_R2, "R2");
-        drawPill(canvas, BUTTON_R1, "R1");
-        if (layoutEditMode) {
-            stroke.setColor(0xFF75B9FF);
-            stroke.setStrokeWidth(dp(2.5f));
-            canvas.drawRoundRect(dp(6), dp(6), getWidth() - dp(6),
-                    getHeight() - dp(6), dp(18), dp(18), stroke);
+    @Override protected void onDraw(Canvas c){
+        super.onDraw(c);if(getWidth()<=0||getHeight()<=0)return;
+        drawStick(c,leftCX(),stickCY(),leftX,leftY,"L");
+        drawStick(c,rightCX(),rightStickCY(),rightX,rightY,"R");
+        drawDpad(c);
+        drawAction(c,BUTTON_Y,"Y");drawAction(c,BUTTON_X,"X");
+        drawAction(c,BUTTON_B,"B");drawAction(c,BUTTON_A,"A");
+        drawPill(c,BUTTON_L1,"L1");drawPill(c,BUTTON_L2,"L2");
+        drawPill(c,BUTTON_SELECT,"SELECT");drawPill(c,BUTTON_START,"START");
+        drawPill(c,BUTTON_R2,"R2");drawPill(c,BUTTON_R1,"R1");
+        drawStickClick(c,BUTTON_L3,"L3");drawStickClick(c,BUTTON_R3,"R3");
+        if(editMode){
+            stroke.setColor(0xFF75B9FF);stroke.setStrokeWidth(dp(2));
+            if(editElement!=0){float[] p=point(editElement);c.drawCircle(p[0],p[1],dp(28),stroke);}
             label.setColor(0xFF8CC8FF);
-            drawLabel(canvas, "GESER UNTUK MENGATUR POSISI GAMEPAD",
-                    getWidth() / 2f, dp(26), dp(11));
+            text(c,"SERET TIAP TOMBOL / ANALOG SENDIRI",getWidth()/2f,dp(24),dp(10));
             label.setColor(0xFFF4F7FC);
         }
     }
-
-    private void drawStick(Canvas canvas, float cx, float cy,
-                           float axisX, float axisY, String name) {
-        float radius = stickRadius();
-        fill.setColor(0x61303C50);
-        canvas.drawCircle(cx, cy, radius, fill);
-        stroke.setColor(0xDCE2EAF5);
-        canvas.drawCircle(cx, cy, radius, stroke);
-        float knobX = cx + axisX * radius * 0.66f;
-        float knobY = cy + axisY * radius * 0.66f;
-        fill.setColor(0xA9303C50);
-        canvas.drawCircle(knobX, knobY, radius * 0.39f, fill);
-        stroke.setColor(0xE7EAF0F7);
-        canvas.drawCircle(knobX, knobY, radius * 0.39f, stroke);
-        drawLabel(canvas, name, knobX, knobY + dp(5), dp(15));
+    private void text(Canvas c,String s,float x,float y,float size){label.setTextSize(size);c.drawText(s,x,y,label);}
+    private void drawStick(Canvas c,float x,float y,float ax,float ay,String name){
+        float r=stickRadius();fill.setColor(0x61303C50);c.drawCircle(x,y,r,fill);
+        stroke.setColor(0xDCE2EAF5);c.drawCircle(x,y,r,stroke);
+        float kx=x+ax*r*0.66f,ky=y+ay*r*0.66f;
+        fill.setColor(0xA9303C50);c.drawCircle(kx,ky,r*0.39f,fill);
+        stroke.setColor(0xE7EAF0F7);c.drawCircle(kx,ky,r*0.39f,stroke);
+        text(c,name,kx,ky+dp(5),dp(15));
     }
-
-    private void drawDpad(Canvas canvas) {
-        int[] directions = {BUTTON_DPAD_UP, BUTTON_DPAD_DOWN,
-                BUTTON_DPAD_LEFT, BUTTON_DPAD_RIGHT};
-        String[] symbols = {"↑", "↓", "←", "→"};
-        float radius = dpadRadius();
-        for (int i = 0; i < directions.length; i++) {
-            int bit = directions[i];
-            float x = dpadX(bit);
-            float y = dpadY(bit);
-            fill.setColor((buttons & bit) != 0 ? 0xC94B8CC8 : 0x71303C50);
-            canvas.drawCircle(x, y, radius, fill);
-            stroke.setColor(0xE7EAF0F7);
-            canvas.drawCircle(x, y, radius, stroke);
-            drawLabel(canvas, symbols[i], x, y + dp(5), dp(18));
+    private void drawDpad(Canvas c){
+        int[] bits={BUTTON_DPAD_UP,BUTTON_DPAD_DOWN,BUTTON_DPAD_LEFT,BUTTON_DPAD_RIGHT};
+        String[] names={"↑","↓","←","→"};float r=dpadRadius();
+        for(int i=0;i<bits.length;i++){
+            int bit=bits[i];float x=dx(bit),y=dy(bit);
+            fill.setColor((buttons&bit)!=0?0xD44B8CC8:0x71303C50);c.drawCircle(x,y,r,fill);
+            stroke.setColor(0xE7EAF0F7);c.drawCircle(x,y,r,stroke);
+            text(c,names[i],x,y+dp(5),dp(17));
         }
     }
-
-    private void drawAction(Canvas canvas, int bit, String text) {
-        float x = buttonX(bit);
-        float y = buttonY(bit);
-        float radius = actionRadius();
-        fill.setColor((buttons & bit) != 0 ? 0xC94B8CC8 : 0x71303C50);
-        canvas.drawCircle(x, y, radius, fill);
-        stroke.setColor(0xE7EAF0F7);
-        canvas.drawCircle(x, y, radius, stroke);
-        drawLabel(canvas, text, x, y + dp(5), dp(14));
+    private void drawAction(Canvas c,int bit,String name){
+        float x=bx(bit),y=by(bit),r=actionRadius();
+        fill.setColor((buttons&bit)!=0?0xD44B8CC8:0x71303C50);c.drawCircle(x,y,r,fill);
+        stroke.setColor(0xE7EAF0F7);c.drawCircle(x,y,r,stroke);
+        text(c,name,x,y+dp(5),dp(14));
+    }
+    private void drawPill(Canvas c,int bit,String name){
+        float x=bx(bit),y=by(bit);
+        float w=(bit==BUTTON_SELECT||bit==BUTTON_START)?Math.min(dp(27),getWidth()*0.035f):Math.min(dp(21),getWidth()*0.028f);
+        float h=dp(14);
+        fill.setColor((buttons&bit)!=0?0xD44B8CC8:0x71303C50);
+        c.drawRoundRect(x-w,y-h,x+w,y+h,dp(10),dp(10),fill);
+        stroke.setColor(0xE7EAF0F7);c.drawRoundRect(x-w,y-h,x+w,y+h,dp(10),dp(10),stroke);
+        text(c,name,x,y+dp(4),dp(10));
+    }
+    private void drawStickClick(Canvas c,int bit,String name){
+        float[] p=point(bit);float r=dp(13)*scale();
+        fill.setColor((buttons&bit)!=0?0xD44B8CC8:0xC1263448);c.drawCircle(p[0],p[1],r,fill);
+        stroke.setColor(0xF0E2EAF5);c.drawCircle(p[0],p[1],r,stroke);
+        text(c,name,p[0],p[1]+dp(3),dp(8));
     }
 
-    private void drawPill(Canvas canvas, int bit, String text) {
-        float x = buttonX(bit);
-        float y = buttonY(bit);
-        float width = (bit == BUTTON_SELECT || bit == BUTTON_START)
-                ? Math.min(dp(27), getWidth() * 0.035f)
-                : Math.min(dp(21), getWidth() * 0.028f);
-        float height = dp(14);
-        fill.setColor((buttons & bit) != 0 ? 0xC94B8CC8 : 0x71303C50);
-        canvas.drawRoundRect(x - width, y - height, x + width, y + height,
-                dp(10), dp(10), fill);
-        stroke.setColor(0xE7EAF0F7);
-        canvas.drawRoundRect(x - width, y - height, x + width, y + height,
-                dp(10), dp(10), stroke);
-        drawLabel(canvas, text, x, y + dp(4), dp(10));
-    }
-
-    private void drawLabel(Canvas canvas, String text, float x, float y, float size) {
-        label.setTextSize(size);
-        canvas.drawText(text, x, y, label);
-    }
-
-    private int hitButton(float x, float y) {
-        int[] directions = {BUTTON_DPAD_UP, BUTTON_DPAD_DOWN,
-                BUTTON_DPAD_LEFT, BUTTON_DPAD_RIGHT};
-        float dpadHitRadius = dpadRadius() + dp(1);
-        for (int bit : directions) {
-            float dx = x - dpadX(bit);
-            float dy = y - dpadY(bit);
-            if (dx * dx + dy * dy <= dpadHitRadius * dpadHitRadius) return bit;
+    private int hitButton(float x,float y){
+        int[] dirs={BUTTON_DPAD_UP,BUTTON_DPAD_DOWN,BUTTON_DPAD_LEFT,BUTTON_DPAD_RIGHT};
+        float dr=dpadRadius()*0.86f;
+        for(int bit:dirs){float a=x-dx(bit),b=y-dy(bit);if(a*a+b*b<=dr*dr)return bit;}
+        int[] acts={BUTTON_A,BUTTON_B,BUTTON_X,BUTTON_Y};
+        float ar=actionRadius()*0.88f;
+        for(int bit:acts){float a=x-bx(bit),b=y-by(bit);if(a*a+b*b<=ar*ar)return bit;}
+        int[] tops={BUTTON_L1,BUTTON_L2,BUTTON_R1,BUTTON_R2,BUTTON_SELECT,BUTTON_START};
+        for(int bit:tops){
+            float hw=(bit==BUTTON_SELECT||bit==BUTTON_START)?Math.min(dp(24),getWidth()*0.032f):Math.min(dp(17),getWidth()*0.026f);
+            float hh=Math.min(dp(14),getHeight()*0.045f);
+            if(Math.abs(x-bx(bit))<=hw&&Math.abs(y-by(bit))<=hh)return bit;
         }
-
-        int[] actions = {BUTTON_A, BUTTON_B, BUTTON_X, BUTTON_Y};
-        float actionHitRadius = actionRadius() + dp(3);
-        for (int bit : actions) {
-            float dx = x - buttonX(bit);
-            float dy = y - buttonY(bit);
-            if (dx * dx + dy * dy <= actionHitRadius * actionHitRadius) return bit;
-        }
-
-        int[] topButtons = {BUTTON_L1, BUTTON_L2, BUTTON_R1, BUTTON_R2,
-                BUTTON_SELECT, BUTTON_START};
-        for (int bit : topButtons) {
-            float halfWidth = (bit == BUTTON_SELECT || bit == BUTTON_START)
-                    ? Math.min(dp(24), getWidth() * 0.032f)
-                    : Math.min(dp(17), getWidth() * 0.026f);
-            float halfHeight = Math.min(dp(14), getHeight() * 0.045f);
-            if (Math.abs(x - buttonX(bit)) <= halfWidth
-                    && Math.abs(y - buttonY(bit)) <= halfHeight) return bit;
-        }
+        float r=dp(13)*scale();
+        float[] l=point(BUTTON_L3),rr=point(BUTTON_R3);
+        float a=x-l[0],b=y-l[1];if(a*a+b*b<=r*r)return BUTTON_L3;
+        a=x-rr[0];b=y-rr[1];if(a*a+b*b<=r*r)return BUTTON_R3;
         return 0;
     }
-
-    private void updateStick(float x, float y, boolean rightStick) {
-        float centerX = rightStick ? rightStickCenterX() : leftStickCenterX();
-        float dx = (x - centerX) / Math.max(1f, stickRadius() * 0.90f) * sensitivity;
-        float dy = (y - stickCenterY()) / Math.max(1f, stickRadius() * 0.90f) * sensitivity;
-        float distance = (float) Math.hypot(dx, dy);
-        final float deadZone = 0.10f;
-        if (distance <= deadZone) {
-            dx = 0f;
-            dy = 0f;
-        } else {
-            float normalized = Math.min(1f, (distance - deadZone) / (1f - deadZone));
-            dx = (dx / distance) * normalized;
-            dy = (dy / distance) * normalized;
-        }
-        if (rightStick) {
-            rightAxisX = Math.max(-1f, Math.min(1f, dx));
-            rightAxisY = Math.max(-1f, Math.min(1f, dy));
-        } else {
-            leftAxisX = Math.max(-1f, Math.min(1f, dx));
-            leftAxisY = Math.max(-1f, Math.min(1f, dy));
-        }
+    private int hitEditElement(float x,float y){
+        int bit=hitButton(x,y);if(bit!=0)return bit;
+        float r=stickRadius()+dp(8),a=x-leftCX(),b=y-stickCY();
+        if(a*a+b*b<=r*r)return ELEMENT_LEFT_STICK;
+        a=x-rightCX();b=y-rightStickCY();
+        if(a*a+b*b<=r*r)return ELEMENT_RIGHT_STICK;
+        return 0;
     }
-
-    private void rebuildButtonMask() {
-        int next = 0;
-        for (Integer bit : buttonPointers.values()) next |= bit;
-        buttons = next;
+    private void updateStick(float x,float y,boolean right){
+        float cx=right?rightCX():leftCX();
+        float ax=(x-cx)/Math.max(1f,stickRadius()*0.90f)*sensitivity;
+        float ay=(y-(right?rightStickCY():stickCY()))/Math.max(1f,stickRadius()*0.90f)*sensitivity;
+        float d=(float)Math.hypot(ax,ay),dead=0.10f;
+        if(d<=dead){ax=ay=0f;}else{float n=Math.min(1f,(d-dead)/(1f-dead));ax=ax/d*n;ay=ay/d*n;}
+        if(right){rightX=clamp(ax,-1,1);rightY=clamp(ay,-1,1);}
+        else{leftX=clamp(ax,-1,1);leftY=clamp(ay,-1,1);}
     }
-
-    private void emitState() {
+    private void rebuildMask(){int m=0;for(Integer bit:buttonPointers.values())m|=bit;buttons=m;}
+    private void emit(){
         postInvalidateOnAnimation();
-        if (listener != null) listener.onGamepadState(
-                buttons, leftAxisX, leftAxisY, rightAxisX, rightAxisY);
+        if(listener!=null)listener.onGamepadState(buttons,leftX,leftY,rightX,rightY);
     }
-
-    private void pressPointer(MotionEvent event, int index) {
-        int pointerId = event.getPointerId(index);
-        if (buttonPointers.containsKey(pointerId)
-                || pointerId == leftStickPointer || pointerId == rightStickPointer) {
-            return;
-        }
-
-        float x = event.getX(index);
-        float y = event.getY(index);
-        float dy = y - stickCenterY();
-
-        // Claim analog zones before testing buttons. The old order let the
-        // D-pad's generous hit circle steal touches from the left stick.
-        float leftDx = x - leftStickCenterX();
-        float stickHitRadius = stickRadius() + dp(8);
-        if (leftStickPointer == -1
-                && leftDx * leftDx + dy * dy <= stickHitRadius * stickHitRadius) {
-            leftStickPointer = pointerId;
-            updateStick(x, y, false);
-            emitState();
-            return;
-        }
-
-        float rightDx = x - rightStickCenterX();
-        if (rightStickPointer == -1
-                && rightDx * rightDx + dy * dy <= stickHitRadius * stickHitRadius) {
-            rightStickPointer = pointerId;
-            updateStick(x, y, true);
-            emitState();
-            return;
-        }
-
-        int bit = hitButton(x, y);
-        if (bit != 0) {
-            buttonPointers.put(pointerId, bit);
-            rebuildButtonMask();
-            emitState();
-        }
+    private boolean press(MotionEvent e,int i){
+        int id=e.getPointerId(i);if(buttonPointers.containsKey(id)||id==leftPointer||id==rightPointer)return true;
+        float x=e.getX(i),y=e.getY(i);int bit=hitButton(x,y);
+        if(bit!=0){buttonPointers.put(id,bit);rebuildMask();emit();return true;}
+        float r=stickRadius()+dp(8),dy=y-stickCY(),dx=x-leftCX();
+        if(leftPointer==-1&&dx*dx+dy*dy<=r*r){leftPointer=id;updateStick(x,y,false);emit();return true;}
+        dx=x-rightCX();dy=y-rightStickCY();
+        if(rightPointer==-1&&dx*dx+dy*dy<=r*r){rightPointer=id;updateStick(x,y,true);emit();return true;}
+        return false;
     }
-
-    private void releasePointer(MotionEvent event, int index) {
-        int pointerId = event.getPointerId(index);
-        if (buttonPointers.remove(pointerId) != null) {
-            rebuildButtonMask();
-            emitState();
-        }
-        if (pointerId == leftStickPointer) {
-            leftStickPointer = -1;
-            leftAxisX = 0f;
-            leftAxisY = 0f;
-            emitState();
-        }
-        if (pointerId == rightStickPointer) {
-            rightStickPointer = -1;
-            rightAxisX = 0f;
-            rightAxisY = 0f;
-            emitState();
-        }
+    private void release(MotionEvent e,int i){
+        int id=e.getPointerId(i);
+        if(buttonPointers.remove(id)!=null){rebuildMask();emit();}
+        if(id==leftPointer){leftPointer=-1;leftX=leftY=0;emit();}
+        if(id==rightPointer){rightPointer=-1;rightX=rightY=0;emit();}
     }
-
-    @Override
-    protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
-        super.onSizeChanged(width, height, oldWidth, oldHeight);
-        if (oldWidth == 0 && oldHeight == 0) return;
-        releaseAllInputs();
+    public void releaseAllInputs(){
+        buttonPointers.clear();buttons=0;leftPointer=rightPointer=-1;
+        leftX=leftY=rightX=rightY=0;emit();
     }
-
-    private boolean handleLayoutDrag(MotionEvent event) {
-        int action = event.getActionMasked(), index = event.getActionIndex();
-        if (action == MotionEvent.ACTION_DOWN) {
-            movePointer = event.getPointerId(index);
-            moveLastX = event.getX(index);
-            moveLastY = event.getY(index);
-            return true;
+    private boolean layoutTouch(MotionEvent e){
+        int action=e.getActionMasked(),i=e.getActionIndex();
+        if(action==MotionEvent.ACTION_DOWN){
+            editPointer=e.getPointerId(i);editElement=hitEditElement(e.getX(i),e.getY(i));
+            editLastX=e.getX(i);editLastY=e.getY(i);invalidate();return editElement!=0;
         }
-        if (action == MotionEvent.ACTION_MOVE && movePointer != -1) {
-            int i = event.findPointerIndex(movePointer);
-            if (i >= 0 && getWidth() > 0 && getHeight() > 0) {
-                float x = event.getX(i), y = event.getY(i);
-                float dx = x - moveLastX, dy = y - moveLastY;
-                moveLastX = x;
-                moveLastY = y;
-                if (dx != 0f || dy != 0f) {
-                    setPositionOffset(positionOffsetX + dx / getWidth(),
-                            positionOffsetY + dy / getHeight());
-                    if (layoutChangedListener != null) {
-                        layoutChangedListener.onPositionChanged(positionOffsetX, positionOffsetY);
-                    }
-                }
-            }
-            return true;
+        if(action==MotionEvent.ACTION_MOVE&&editPointer!=-1){
+            int idx=e.findPointerIndex(editPointer);
+            if(idx>=0&&getWidth()>0&&getHeight()>0){
+                float x=e.getX(idx),y=e.getY(idx),oldX=getElementOffsetX(editElement),oldY=getElementOffsetY(editElement);
+                setElementOffset(editElement,oldX+(x-editLastX)/getWidth(),oldY+(y-editLastY)/getHeight());
+                editLastX=x;editLastY=y;
+                if(layoutListener!=null)layoutListener.onElementPositionChanged(editElement,getElementOffsetX(editElement),getElementOffsetY(editElement));
+            }return true;
         }
-        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP
-                || action == MotionEvent.ACTION_CANCEL) movePointer = -1;
+        if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_POINTER_UP||action==MotionEvent.ACTION_CANCEL){editPointer=-1;editElement=0;invalidate();}
         return true;
     }
-
-    private void cleanupMissingPointers(MotionEvent event) {
-        boolean changed = false;
-        java.util.Iterator<Map.Entry<Integer, Integer>> it = buttonPointers.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<Integer, Integer> entry = it.next();
-            if (event.findPointerIndex(entry.getKey()) < 0) {
-                it.remove();
-                changed = true;
-            }
-        }
-        if (leftStickPointer != -1 && event.findPointerIndex(leftStickPointer) < 0) {
-            leftStickPointer = -1;
-            leftAxisX = leftAxisY = 0f;
-            changed = true;
-        }
-        if (rightStickPointer != -1 && event.findPointerIndex(rightStickPointer) < 0) {
-            rightStickPointer = -1;
-            rightAxisX = rightAxisY = 0f;
-            changed = true;
-        }
-        if (changed) {
-            rebuildButtonMask();
-            emitState();
-        }
+    private void cleanupPointers(MotionEvent e){
+        boolean changed=false;Iterator<Map.Entry<Integer,Integer>> it=buttonPointers.entrySet().iterator();
+        while(it.hasNext()){Map.Entry<Integer,Integer> v=it.next();if(e.findPointerIndex(v.getKey())<0){it.remove();changed=true;}}
+        if(leftPointer!=-1&&e.findPointerIndex(leftPointer)<0){leftPointer=-1;leftX=leftY=0;changed=true;}
+        if(rightPointer!=-1&&e.findPointerIndex(rightPointer)<0){rightPointer=-1;rightX=rightY=0;changed=true;}
+        if(changed){rebuildMask();emit();}
     }
-
-    @Override
-    public boolean onTouchEvent(MotionEvent event) {
-        if (layoutEditMode) return handleLayoutDrag(event);
-        int action = event.getActionMasked();
-        int index = event.getActionIndex();
-
-        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
-            pressPointer(event, index);
-            return true;
+    @Override protected void onSizeChanged(int w,int h,int oldW,int oldH){super.onSizeChanged(w,h,oldW,oldH);if(oldW>0||oldH>0)releaseAllInputs();}
+    @Override public boolean onTouchEvent(MotionEvent e){
+        if(editMode)return layoutTouch(e);
+        int a=e.getActionMasked(),i=e.getActionIndex();
+        if(a==MotionEvent.ACTION_DOWN||a==MotionEvent.ACTION_POINTER_DOWN)
+            return press(e,i)||leftPointer!=-1||rightPointer!=-1||!buttonPointers.isEmpty();
+        if(a==MotionEvent.ACTION_MOVE){
+            cleanupPointers(e);
+            if(leftPointer!=-1){int n=e.findPointerIndex(leftPointer);if(n>=0)updateStick(e.getX(n),e.getY(n),false);}
+            if(rightPointer!=-1){int n=e.findPointerIndex(rightPointer);if(n>=0)updateStick(e.getX(n),e.getY(n),true);}
+            if(leftPointer!=-1||rightPointer!=-1)emit();
+            return leftPointer!=-1||rightPointer!=-1||!buttonPointers.isEmpty();
         }
-
-        if (action == MotionEvent.ACTION_MOVE) {
-            cleanupMissingPointers(event);
-            if (leftStickPointer != -1) {
-                int i = event.findPointerIndex(leftStickPointer);
-                if (i >= 0) {
-                    updateStick(event.getX(i), event.getY(i), false);
-                    emitState();
-                }
-            }
-            if (rightStickPointer != -1) {
-                int i = event.findPointerIndex(rightStickPointer);
-                if (i >= 0) {
-                    updateStick(event.getX(i), event.getY(i), true);
-                    emitState();
-                }
-            }
-            return true;
-        }
-
-        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
-            releasePointer(event, index);
-            if (action == MotionEvent.ACTION_UP) releaseAllInputs();
-            return true;
-        }
-
-        if (action == MotionEvent.ACTION_CANCEL) {
-            buttonPointers.clear();
-            buttons = 0;
-            leftStickPointer = -1;
-            rightStickPointer = -1;
-            leftAxisX = leftAxisY = rightAxisX = rightAxisY = 0f;
-            emitState();
-            return true;
-        }
-        return true;
+        if(a==MotionEvent.ACTION_UP||a==MotionEvent.ACTION_POINTER_UP){release(e,i);if(a==MotionEvent.ACTION_UP)releaseAllInputs();return true;}
+        if(a==MotionEvent.ACTION_CANCEL){releaseAllInputs();return true;}
+        return leftPointer!=-1||rightPointer!=-1||!buttonPointers.isEmpty();
     }
-
-    @Override
-    protected void onDetachedFromWindow() {
-        releaseAllInputs();
-        super.onDetachedFromWindow();
-    }
+    @Override public boolean performClick(){super.performClick();return true;}
+    @Override protected void onDetachedFromWindow(){releaseAllInputs();super.onDetachedFromWindow();}
 }

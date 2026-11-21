@@ -1,4 +1,4 @@
-# OfflineMirror 1.38.0
+# OfflineMirror 1.39.0
 
 OfflineMirror mirrors an Android display to another Android phone over the same private Wi-Fi or hotspot. Internet access is not required.
 
@@ -16,12 +16,15 @@ OfflineMirror mirrors an Android display to another Android phone over the same 
 
 - Gamepad and relative mouse are separate HID top-level collections under a composite Bluetooth HID profile.
 - The SDP device class advertises the combo mouse profile together with the gamepad subclass, instead of advertising only a gamepad. This is needed for hosts to recognize both input collections.
-- Gamepad reports use Android-oriented button usage IDs, a hat-switch D-pad, X/Y and Z/Rz axes, and C5/C4 trigger axes.
+- Gamepad reports use Android-oriented button usage IDs including L3/R3, a hat-switch D-pad, X/Y and Z/Rz axes, and C5/C4 trigger axes.
 - Mouse movement is accumulated before reports are sent. Fast trackpad movement is split into valid signed HID packets instead of replacing earlier movement samples.
 - Mouse button press/release transitions are sent independently from movement so clicks are not lost.
 - The Viewer now uses one pointer only on the Host; no duplicate software cursor is drawn over the mirrored image.
-- The Viewer trackpad uses one-finger pointer movement, double-tap left-click, and two-finger vertical scrolling. Its side strip contains only dedicated scroll-up and scroll-down buttons.
-- The mouse panel and complete gamepad overlay can be repositioned with the LAYOUT tool. Their normalized positions are saved locally and restored after reconnect/orientation changes.
+- MOUSE mode is a transparent full-screen touch layer: drag directly on the mirrored image to move the cursor, tap for left click, long-press for right click, and use two fingers for vertical scroll.
+- Dedicated SCROLL ↑ and SCROLL ↓ toolbar buttons send wheel events directly. Their sensitivities are independently configurable from 1x to 10x.
+- LAYOUT moves each gamepad button, D-pad direction and analog stick independently. Each position is saved locally.
+- L3 and R3 are the clickable centers of the virtual analog sticks and use additional HID button usages 13/14.
+- D-pad hit targets are spaced apart so adjacent directions cannot steal each other's touch.
 - Gamepad button pointers are reconciled against active MotionEvent pointers. A final pointer-up/cancel always sends a neutral state, and queued axis reports are serialized with D-pad/button edges so stale reports cannot reassert a released direction.
 - Viewer decoder output buffers are drained while waiting for input buffers. Video sockets have a stall timeout and automatically reconnect; the decoder is released per connection but the Surface is retained across network retries.
 - A focus loss, gamepad overlay hide, or activity shutdown sends neutral controller state to prevent held buttons.
@@ -32,11 +35,11 @@ Android's controller usage table maps A/B/X/Y to Button usages 1/2/4/5, L1/R1 to
 
 ## Mouse controls
 
-In Viewer, tap **MOUSE** to show the native-feeling trackpad. One finger moves the Host pointer, double-tap performs a left click, and a two-finger vertical swipe scrolls. The side strip contains only scroll-up and scroll-down buttons. Adjust each direction independently in **SETTINGS → Sensitivitas scroll mouse** (1x–10x). These values set the wheel steps per button press and scale the two-finger scroll gesture. The operating-system pointer is displayed by the Host only.
+In Viewer, tap **MOUSE** to enable the transparent direct-touch layer. Touch and drag anywhere on the mirrored image to move the mouse cursor; tap performs a left click, long-press performs a right click, and a two-finger vertical swipe scrolls. The toolbar also provides SCROLL ↑ and SCROLL ↓. Adjust each direction independently in **SETTINGS → Sensitivitas scroll mouse** (1x–10x).
 
 ## HUD
 
-Use LAYOUT to enter edit mode, then drag the mouse panel or the gamepad overlay to reposition it. Tap SELESAI when finished. Positions are saved automatically. Use HUD − to hide the status area and toolbar (Pair, Settings, Mouse, Layout, volume, Media and Clipboard). HUD + restores the controls. The setting is remembered.
+Use LAYOUT to enter edit mode, then drag each gamepad button, D-pad direction, or analog stick independently. Tap SELESAI when finished. Each position is saved automatically. Use HUD − to hide the status area and toolbar (Pair, Settings, Mouse, Layout, volume, Media and Clipboard). HUD + restores the controls. The setting is remembered.
 
 ## Network channels
 
