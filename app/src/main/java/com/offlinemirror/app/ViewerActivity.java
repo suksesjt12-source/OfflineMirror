@@ -778,7 +778,14 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
     private void startBluetoothGamepad(BluetoothDevice device) {
         selectedHidDevice = device;
-        if (bluetoothGamepad != null) bluetoothGamepad.stop();
+        if (bluetoothGamepad != null) {
+            bluetoothGamepad.switchProfile(device, selectedHidMode);
+            bluetoothStatus = "Mengganti ke Bluetooth " + (selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + "...";
+            if (gamepadStatus != null) gamepadStatus.setText(bluetoothStatus);
+            if (device == null) requestBluetoothDiscoverable();
+            updateStatus();
+            return;
+        }
         bluetoothGamepad = new BluetoothHidGamepad(this, message -> runOnUiThread(() -> {
             bluetoothStatus = message;
             if (gamepadStatus != null) gamepadStatus.setText(message);
