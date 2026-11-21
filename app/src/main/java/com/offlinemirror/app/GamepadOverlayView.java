@@ -213,7 +213,7 @@ public final class GamepadOverlayView extends View {
                 BUTTON_DPAD_UP, BUTTON_DPAD_DOWN,
                 BUTTON_DPAD_LEFT, BUTTON_DPAD_RIGHT
         };
-        float limit = dpadRadius() * 0.62f;
+        float limit = dpadRadius() * 1.12f;
         float bestDistance = limit * limit;
         int best = 0;
         for (int bit : directions) {
@@ -233,7 +233,7 @@ public final class GamepadOverlayView extends View {
         int dpad = hitDpad(x, y);
         if (dpad != 0) return dpad;
         int[] acts={BUTTON_A,BUTTON_B,BUTTON_X,BUTTON_Y};
-        float ar=actionRadius()*0.88f;
+        float ar=actionRadius()*1.18f;
         for(int bit:acts){float a=x-bx(bit),b=y-by(bit);if(a*a+b*b<=ar*ar)return bit;}
         int[] tops={BUTTON_L1,BUTTON_L2,BUTTON_R1,BUTTON_R2,BUTTON_SELECT,BUTTON_START};
         for(int bit:tops){
@@ -249,7 +249,7 @@ public final class GamepadOverlayView extends View {
     }
     private int hitEditElement(float x,float y){
         int bit=hitButton(x,y);if(bit!=0)return bit;
-        float r=stickRadius()+dp(8),a=x-leftCX(),b=y-stickCY();
+        float r=stickRadius()+dp(18),a=x-leftCX(),b=y-stickCY();
         if(a*a+b*b<=r*r)return ELEMENT_LEFT_STICK;
         a=x-rightCX();b=y-rightStickCY();
         if(a*a+b*b<=r*r)return ELEMENT_RIGHT_STICK;
@@ -273,7 +273,7 @@ public final class GamepadOverlayView extends View {
         int id=e.getPointerId(i);if(buttonPointers.containsKey(id)||id==leftPointer||id==rightPointer)return true;
         float x=e.getX(i),y=e.getY(i);int bit=hitButton(x,y);
         if(bit!=0){buttonPointers.put(id,bit);rebuildMask();emit();return true;}
-        float r=stickRadius()+dp(8),dy=y-stickCY(),dx=x-leftCX();
+        float r=stickRadius()+dp(18),dy=y-stickCY(),dx=x-leftCX();
         if(leftPointer==-1&&dx*dx+dy*dy<=r*r){leftPointer=id;updateStick(x,y,false);emit();return true;}
         dx=x-rightCX();dy=y-rightStickCY();
         if(rightPointer==-1&&dx*dx+dy*dy<=r*r){rightPointer=id;updateStick(x,y,true);emit();return true;}

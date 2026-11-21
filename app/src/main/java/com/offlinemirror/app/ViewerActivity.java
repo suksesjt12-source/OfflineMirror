@@ -228,7 +228,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         toolsBar.setGravity(Gravity.CENTER);
         toolsBar.setBackgroundColor(0xBB111923);
         String[] toolNames = {"SETTINGS", "BLUETOOTH", "LAYOUT",
-                "RECENTS", "HOME", "BACK", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
+                "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
         Button settingsTool = null;
         Button layoutTool = null;
         bluetoothButton = null;
@@ -245,9 +245,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             if ("SETTINGS".equals(toolName)) settingsTool = tool;
             else if ("BLUETOOTH".equals(toolName)) bluetoothButton = tool;
             else if ("LAYOUT".equals(toolName)) layoutTool = tool;
-            else if ("RECENTS".equals(toolName)) tool.setOnClickListener(v -> sendBluetoothNavigation(3));
-            else if ("BACK".equals(toolName)) tool.setOnClickListener(v -> sendBluetoothNavigation(2));
-            else if ("HOME".equals(toolName)) tool.setOnClickListener(v -> sendBluetoothNavigation(1));
             else if ("VOL -".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 1));
             else if ("VOL +".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 2));
             else if ("MEDIA".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 3));
@@ -273,6 +270,61 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(42), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         toggleParams.bottomMargin = dp(10);
         root.addView(overlayToggle, toggleParams);
+        final android.content.SharedPreferences modePrefs = preferences;
+        final float savedToggleX = preferences.getFloat("mode_toggle_x", -1f);
+        final float savedToggleY = preferences.getFloat("mode_toggle_y", -1f);
+        overlayToggle.post(() -> {
+            if (savedToggleX >= 0f && savedToggleY >= 0f) {
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) overlayToggle.getLayoutParams();
+                lp.gravity = Gravity.TOP | Gravity.LEFT;
+                lp.leftMargin = Math.max(0, Math.min(root.getWidth() - overlayToggle.getWidth(),
+                        Math.round(savedToggleX * root.getWidth())));
+                lp.topMargin = Math.max(0, Math.min(root.getHeight() - overlayToggle.getHeight(),
+                        Math.round(savedToggleY * root.getHeight())));
+                lp.bottomMargin = 0;
+                overlayToggle.setLayoutParams(lp);
+            }
+        });
+        final float[] dragStart = new float[2];
+        final float[] viewStart = new float[2];
+        final boolean[] dragged = {false};
+        overlayToggle.setOnTouchListener((view, event) -> {
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) view.getLayoutParams();
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    dragStart[0] = event.getRawX(); dragStart[1] = event.getRawY();
+                    viewStart[0] = view.getX(); viewStart[1] = view.getY();
+                    dragged[0] = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = event.getRawX() - dragStart[0];
+                    float dy = event.getRawY() - dragStart[1];
+                    if (Math.abs(dx) + Math.abs(dy) > dp(7)) dragged[0] = true;
+                    if (dragged[0]) {
+                        lp.gravity = Gravity.TOP | Gravity.LEFT;
+                        lp.leftMargin = Math.max(0, Math.min(root.getWidth() - view.getWidth(),
+                                Math.round(viewStart[0] + dx)));
+                        lp.topMargin = Math.max(0, Math.min(root.getHeight() - view.getHeight(),
+                                Math.round(viewStart[1] + dy)));
+                        lp.rightMargin = 0; lp.bottomMargin = 0;
+                        view.setLayoutParams(lp);
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (dragged[0]) {
+                        float nx = root.getWidth() > 0 ? view.getX() / root.getWidth() : 0f;
+                        float ny = root.getHeight() > 0 ? view.getY() / root.getHeight() : 0f;
+                        modePrefs.edit().putFloat("mode_toggle_x", nx)
+                                .putFloat("mode_toggle_y", ny).apply();
+                    } else {
+                        view.performClick();
+                    }
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    return true;
+            }
+            return true;
+        });
         gamepadButton.setEnabled(true);
         gamepadButton.setOnClickListener(button -> showBluetoothDevicePicker());
         if (!controlEnabled) {
