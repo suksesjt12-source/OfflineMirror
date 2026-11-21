@@ -72,7 +72,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private TouchOverlayView touchOverlay;
     private Button layoutToolButton;
     private Button overlayToggleButton;
-    private boolean gamepadInputMode = false;
+    private boolean gamepadInputMode = true;
     private boolean layoutEditMode;
     private boolean gamepadWasHiddenBeforeLayout;
     private volatile long receiveGeneration;
@@ -216,8 +216,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         root.addView(videoFrame, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Jaringan 1 (Wi-Fi): video/audio mirroring and utility data.
-        // Jaringan 2 (Bluetooth): selected Touch HID or Gamepad profile.
+        // Wi-Fi carries mirroring; one composite Bluetooth HID profile exposes
+        // both touchscreen and gamepad reports at the same time.
         FrameLayout.LayoutParams gamepadBarParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(44), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         gamepadBarParams.topMargin = dp(48);
@@ -266,7 +266,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
         Button overlayToggle = new Button(this);
         overlayToggleButton = overlayToggle;
-        overlayToggle.setText("GANTI KE GAMEPAD");
+        overlayToggle.setText("HYBRID: TOUCH + GAMEPAD");
         overlayToggle.setTextSize(10);
         FrameLayout.LayoutParams toggleParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(42), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
@@ -337,7 +337,9 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             toolsScroll.setVisibility(View.GONE);
             controlStatus = "Mode penonton • video saja";
         } else {
-            gamepadOverlay.setVisibility(View.GONE);
+            // Gamepad is the upper layer. Its unhandled screen areas fall through
+            // to TouchOverlayView, allowing ordinary touchscreen gestures too.
+            gamepadOverlay.setVisibility(View.VISIBLE);
             touchOverlay.setVisibility(View.VISIBLE);
         }
         overlayToggle.setOnClickListener(button ->
@@ -376,7 +378,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         });
 
         setContentView(root);
-        setInputMode(false, "Touch HID");
+        setInputMode(true, "Hybrid");
 
         videoStatus = "Menghubungkan ke Host " + host + "...";
         updateStatus();
@@ -548,22 +550,21 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         if (!controlEnabled) return;
         if (gamepadInputMode == useGamepad && overlayToggleButton != null) return;
 
-        if (gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
-        if (useGamepad && touchOverlay != null) touchOverlay.cancelTouches();
+        if (!useGamepad && gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
+        if (touchOverlay != null) touchOverlay.cancelTouches();
 
         gamepadInputMode = useGamepad;
         if (bluetoothGamepad != null) bluetoothGamepad.setInputMode(useGamepad);
-        if (touchOverlay != null) {
-            touchOverlay.setVisibility(useGamepad ? View.GONE : View.VISIBLE);
-        }
+        if (touchOverlay != null) touchOverlay.setVisibility(View.VISIBLE);
         if (gamepadOverlay != null) {
             gamepadOverlay.setVisibility(useGamepad ? View.VISIBLE : View.GONE);
         }
         if (overlayToggleButton != null) {
-            overlayToggleButton.setText(useGamepad ? "GANTI KE TOUCH HID" : "GANTI KE GAMEPAD");
+            overlayToggleButton.setText(useGamepad
+                    ? "HYBRID: TOUCH + GAMEPAD" : "TOUCH SAJA • AKTIFKAN HYBRID");
         }
-        controlStatus = source + ": Jaringan 1 Wi-Fi tetap untuk mirroring; Jaringan 2 Bluetooth beralih ke "
-                + (useGamepad ? "profil Gamepad." : "profil Touch HID.");
+        controlStatus = source + ": Bluetooth HID Hybrid tetap terdaftar; "
+                + (useGamepad ? "Touch + Gamepad aktif bersamaan." : "Touch aktif, overlay Gamepad disembunyikan.");
         updateStatus();
     }
 
@@ -702,7 +703,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         if (bonded == null || bonded.isEmpty()) {
             startBluetoothGamepad(null);
             new AlertDialog.Builder(this).setTitle("Bluetooth HID siap dipair")
-                    .setMessage("Jaringan 1 memakai Wi-Fi untuk video/audio mirroring. Jaringan 2 memakai Bluetooth dan hanya mendaftarkan satu profil: OfflineMirror Touch HID atau OfflineMirror Gamepad sesuai tombol mode. Pada HP Host, hapus pairing OfflineMirror lama bila profil lama masih tersimpan, lalu pair perangkat yang muncul. Biarkan Viewer tetap terbuka saat pairing. Dukungan Touchscreen HID bergantung versi Android dan firmware Host.")
+                    .setMessage("Jaringan 1 memakai Wi-Fi untuk mirroring. Jaringan 2 mendaftarkan satu profil HID gabungan berisi Touchscreen dan Gamepad dengan Report ID terpisah. Pada HP Host, hapus pairing OfflineMirror lama jika sebelumnya memakai profil lama, lalu pair perangkat yang muncul. Biarkan Viewer tetap terbuka saat pairing. Dukungan Touchscreen HID tetap bergantung versi Android dan firmware Host.")
                     .setPositiveButton("Mengerti", null)
                     .setNeutralButton("Setelan Bluetooth Viewer", (d, w) ->
                             startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)))
@@ -775,24 +776,18 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             }
             if (message.contains("mode sebelumnya dipertahankan")
                     && bluetoothGamepad != null) {
-                gamepadInputMode = bluetoothGamepad.isGamepadMode();
-                if (touchOverlay != null) {
-                    touchOverlay.setVisibility(gamepadInputMode ? View.GONE : View.VISIBLE);
-                }
-                if (gamepadOverlay != null) {
-                    gamepadOverlay.setVisibility(gamepadInputMode ? View.VISIBLE : View.GONE);
-                }
+                gamepadInputMode = true;
+                if (touchOverlay != null) touchOverlay.setVisibility(View.VISIBLE);
+                if (gamepadOverlay != null) gamepadOverlay.setVisibility(View.VISIBLE);
                 if (overlayToggleButton != null) {
-                    overlayToggleButton.setText(gamepadInputMode
-                            ? "GANTI KE TOUCH HID" : "GANTI KE GAMEPAD");
+                    overlayToggleButton.setText("HYBRID: TOUCH + GAMEPAD");
                 }
-                controlStatus = "Jaringan 2 mempertahankan profil " +
-                        (gamepadInputMode ? "Gamepad." : "Touch HID.");
+                controlStatus = "Bluetooth HID Hybrid aktif: Touch + Gamepad.";
                 updateStatus();
             }
         }));
         bluetoothStatus = device == null
-                ? "Jaringan 2 • Mendaftarkan Bluetooth " + (gamepadInputMode ? "Gamepad" : "Touch HID") + "..."
+                ? "Jaringan 2 • Mendaftarkan Bluetooth HID Hybrid..."
                 : "Jaringan 2 • Menyambungkan ke " + device.getAddress();
         if (gamepadStatus != null) gamepadStatus.setText(bluetoothStatus);
         if (bluetoothButton != null) bluetoothButton.setText("JARINGAN 2: CONNECTING");
@@ -1254,8 +1249,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                         + videoStatus + pingText + "  •  " + audioStatus + "  •  " + controlStatus);
                 if (gamepadStatus != null) {
                     gamepadStatus.setText(bluetoothStatus
-                            + " • Jaringan 2: " + (gamepadInputMode
-                                    ? "profil Gamepad" : "profil Touch HID"));
+                            + " • Jaringan 2: HID Hybrid Touch + Gamepad");
                 }
             }
         });
