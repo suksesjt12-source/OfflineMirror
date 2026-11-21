@@ -76,7 +76,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private boolean gamepadWasHiddenBeforeLayout;
     private volatile long receiveGeneration;
     private volatile String bluetoothStatus =
-            "Bluetooth HID belum tersambung • tekan PAIR BT";
+            "Jaringan 2 • Bluetooth HID belum tersambung • tekan PAIR BT";
     private boolean controlEnabled = true;
     private boolean lowLatencyMode = true;
     private boolean showPerformance = true;
@@ -215,7 +215,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         root.addView(videoFrame, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Gamepad and experimental absolute touchscreen input use Bluetooth HID.
+        // Jaringan 1 (Wi-Fi): video/audio mirroring and utility data.
+        // Jaringan 2 (Bluetooth): selected Touch HID or Gamepad profile.
         FrameLayout.LayoutParams gamepadBarParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(44), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         gamepadBarParams.topMargin = dp(48);
@@ -542,13 +543,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         }
     }
 
-    private void sendBluetoothNavigation(int action) {
-        if (!controlEnabled || bluetoothGamepad == null
-                || !bluetoothGamepad.sendNavigation(action)) {
-            Toast.makeText(this, "Bluetooth HID belum tersambung", Toast.LENGTH_SHORT).show();
-        }
-    }
-
     private void setInputMode(boolean useGamepad, String source) {
         if (!controlEnabled) return;
         if (gamepadInputMode == useGamepad && overlayToggleButton != null) return;
@@ -567,9 +561,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         if (overlayToggleButton != null) {
             overlayToggleButton.setText(useGamepad ? "GANTI KE TOUCH HID" : "GANTI KE GAMEPAD");
         }
-        controlStatus = source + ": " + (useGamepad
-                ? "Gamepad aktif • Touch HID nonaktif"
-                : "Touch HID aktif • Gamepad nonaktif");
+        controlStatus = source + ": Jaringan 1 Wi-Fi tetap untuk mirroring; Jaringan 2 Bluetooth beralih ke "
+                + (useGamepad ? "profil Gamepad." : "profil Touch HID.");
         updateStatus();
     }
 
@@ -723,7 +716,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             labels[i] = (name == null || name.isEmpty() ? "Bluetooth device" : name)
                     + " • " + device.getAddress();
         }
-        new AlertDialog.Builder(this).setTitle("Pilih HP Host")
+        new AlertDialog.Builder(this).setTitle("Jaringan 2 • Pilih HP Host Bluetooth HID")
                 .setItems(labels, (dialog, which) -> startBluetoothGamepad(devices.get(which)))
                 .setNeutralButton("Pengaturan Bluetooth", (dialog, which) ->
                         startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)))
@@ -736,15 +729,15 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             bluetoothStatus = message;
             if (gamepadStatus != null) gamepadStatus.setText(message);
             if (bluetoothButton != null) {
-                bluetoothButton.setText(message.contains("terhubung")
-                        ? "BT: AKTIF" : "BLUETOOTH");
+                bluetoothButton.setText(message.contains("aktif")
+                        ? "JARINGAN 2: AKTIF" : "JARINGAN 2: BT");
             }
         }));
         bluetoothStatus = device == null
-                ? "Mendaftarkan Bluetooth HID untuk pairing Host..."
-                : "Menyambungkan ke " + device.getAddress();
+                ? "Jaringan 2 • Mendaftarkan Bluetooth " + (gamepadInputMode ? "Gamepad" : "Touch HID") + "..."
+                : "Jaringan 2 • Menyambungkan ke " + device.getAddress();
         if (gamepadStatus != null) gamepadStatus.setText(bluetoothStatus);
-        if (bluetoothButton != null) bluetoothButton.setText("BT: CONNECTING");
+        if (bluetoothButton != null) bluetoothButton.setText("JARINGAN 2: CONNECTING");
         bluetoothGamepad.setInputMode(gamepadInputMode);
         bluetoothGamepad.start(device);
     }
