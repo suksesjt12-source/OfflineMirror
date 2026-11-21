@@ -55,7 +55,6 @@ public class MainActivity extends Activity {
     private Spinner bitrateSpinner;
     private CheckBox adaptiveFpsCheck;
     private CheckBox screenOffModeCheck;
-    private CheckBox autoEmulatorModeCheck;
     private EditText addressInput;
     private EditText keyInput;
     private CheckBox audioCheck;
@@ -156,26 +155,6 @@ public class MainActivity extends Activity {
         screenOffHintParams.leftMargin = dp(4);
         screenOffHintParams.topMargin = dp(2);
         page.addView(screenOffHint, screenOffHintParams);
-
-        autoEmulatorModeCheck = new CheckBox(this);
-        autoEmulatorModeCheck.setText("Auto Detect: emulator aktif → otomatis Gamepad");
-        autoEmulatorModeCheck.setTextColor(Color.rgb(196, 207, 224));
-        autoEmulatorModeCheck.setTextSize(13);
-        autoEmulatorModeCheck.setChecked(true);
-        LinearLayout.LayoutParams autoModeParams = matchWrap();
-        autoModeParams.topMargin = dp(12);
-        page.addView(autoEmulatorModeCheck, autoModeParams);
-
-        Button usageAccessButton = makeButton("IZINKAN DETEKSI APLIKASI", Color.rgb(43, 83, 132));
-        LinearLayout.LayoutParams usageParams = matchWrap();
-        usageParams.topMargin = dp(4);
-        page.addView(usageAccessButton, usageParams);
-        usageAccessButton.setOnClickListener(v -> {
-            try { startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)); }
-            catch (Exception error) {
-                Toast.makeText(this, "Pengaturan Usage Access tidak tersedia", Toast.LENGTH_LONG).show();
-            }
-        });
 
         Button startButton = makeButton("START SCREEN SHARING", Color.rgb(43, 116, 235));
         LinearLayout.LayoutParams startParams = matchWrap();
@@ -297,7 +276,7 @@ public class MainActivity extends Activity {
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Touchscreen satu jari, Gamepad, serta tombol HOME dan BACK berada dalam satu koneksi Bluetooth HID. Auto Detect memerlukan Usage Access pada Host. Saat emulator terdeteksi, Touch HID dinonaktifkan dan hanya Gamepad yang aktif; saat aplikasi biasa aktif, Gamepad dinonaktifkan dan Touch HID aktif. Viewer menyediakan tombol HOME/BACK melalui Bluetooth HID, dua stick analog, D-pad, tombol bahu, dan tombol aksi. Gunakan LAYOUT untuk mengatur posisi gamepad. Wi-Fi membawa video, audio opsional, serta perintah utilitas clipboard/volume/media. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
+        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Touchscreen satu jari, Gamepad, serta tombol Recent Apps, HOME, dan BACK berada dalam satu perangkat Bluetooth HID. Pilih mode Touch HID atau Gamepad secara manual dari Viewer; hanya mode terpilih yang mengirim input. Viewer menyediakan navigasi Android melalui Bluetooth, dua stick analog, D-pad, tombol bahu, dan tombol aksi. Gunakan LAYOUT untuk mengatur posisi gamepad. Wi-Fi membawa video, audio opsional, serta perintah utilitas clipboard/volume/media. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
@@ -612,8 +591,6 @@ public class MainActivity extends Activity {
         service.putExtra("audioEnabled", audioCheck.isChecked() && Build.VERSION.SDK_INT >= 29);
         service.putExtra("keepCpuAwakeWhenScreenOff",
                 screenOffModeCheck != null && screenOffModeCheck.isChecked());
-        service.putExtra("autoEmulatorMode",
-                autoEmulatorModeCheck != null && autoEmulatorModeCheck.isChecked());
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(service);
@@ -628,9 +605,7 @@ public class MainActivity extends Activity {
                 + (screenOffModeCheck != null && screenOffModeCheck.isChecked()
                 ? "Mode layar mati siap: hubungkan Viewer lalu tekan tombol Power Host sekali. "
                 : "")
-                + "Salin IP Host dan pairing key ke HP Viewer."
-                + (autoEmulatorModeCheck != null && autoEmulatorModeCheck.isChecked()
-                    ? " Deteksi emulator memerlukan izin Usage Access pada Host." : ""));
+                + "Salin IP Host dan pairing key ke HP Viewer. Mode Touch HID/Gamepad diganti manual dari Viewer.");
     }
 
     @Override

@@ -34,13 +34,13 @@ public final class BluetoothHidGamepad {
         0x05, 0x09,
         0x09, 0x01, 0x09, 0x02, 0x09, 0x04, 0x09, 0x05,
         0x09, 0x07, 0x09, 0x08, 0x09, 0x09, 0x09, 0x0A,
-        0x09, 0x0B, 0x09, 0x0C, 0x09, 0x0D, 0x09, 0x0E,
+        0x09, 0x0B, 0x09, 0x0C, 0x09, 0x0E, 0x09, 0x0F,
         0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
         (byte) 0x95, 0x0C, (byte) 0x81, 0x02,
         0x75, 0x04, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
 
         0x05, 0x01, 0x09, 0x39,
-        0x15, 0x00, 0x25, 0x08, 0x35, 0x00,
+        0x15, 0x00, 0x25, 0x07, 0x35, 0x00,
         0x46, 0x3B, 0x01, 0x65, 0x14, 0x75, 0x04,
         (byte) 0x95, 0x01, (byte) 0x81, 0x42,
         0x75, 0x04, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
@@ -57,9 +57,10 @@ public final class BluetoothHidGamepad {
         0x05, 0x0C,
         0x0A, 0x23, 0x02, // AC Home -> KEYCODE_HOME
         0x0A, 0x24, 0x02, // AC Back -> KEYCODE_BACK
+        0x0A, (byte) 0x9F, 0x02, // AC Task Manager -> Recent Apps; Host mapping may vary
         0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
-        (byte) 0x95, 0x02, (byte) 0x81, 0x02,
-        0x75, 0x06, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
+        (byte) 0x95, 0x03, (byte) 0x81, 0x02,
+        0x75, 0x05, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
         (byte) 0xC0,
 
         // Experimental HID Digitizer Touch Screen: one absolute contact.
@@ -349,13 +350,14 @@ public final class BluetoothHidGamepad {
         }
     }
 
-    /** Send standard AC Home (1) or AC Back (2) over Bluetooth HID. */
+    /** Send Recent Apps (3), Home (1), or Back (2) over the same Bluetooth HID device. */
     public boolean sendNavigation(int action) {
-        if (!connected || reportHandler == null || (action != 1 && action != 2)) {
+        if (!connected || reportHandler == null
+                || (action != 1 && action != 2 && action != 3)) {
             return false;
         }
         synchronized (reportLock) {
-            final int bit = action == 1 ? 0x01 : 0x02;
+            final int bit = action == 1 ? 0x01 : (action == 2 ? 0x02 : 0x04);
             final int generation = ++navigationGeneration;
             navigationButtons = bit;
             byte[] pressed = latestGamepadReport.clone();
@@ -432,7 +434,7 @@ public final class BluetoothHidGamepad {
         report[6] = toAxis(ry); // Rz
         report[7] = (byte) ((buttons & (1 << 6)) != 0 ? 255 : 0); // Brake
         report[8] = (byte) ((buttons & (1 << 7)) != 0 ? 255 : 0); // Accelerator
-        report[9] = (byte) (navigation & 0x03); // Consumer Home / Back
+        report[9] = (byte) (navigation & 0x07); // Consumer Recent Apps / Home / Back
         return report;
     }
 

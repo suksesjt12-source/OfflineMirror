@@ -228,7 +228,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         toolsBar.setGravity(Gravity.CENTER);
         toolsBar.setBackgroundColor(0xBB111923);
         String[] toolNames = {"SETTINGS", "BLUETOOTH", "LAYOUT",
-                "BACK", "HOME", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
+                "RECENTS", "HOME", "BACK", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
         Button settingsTool = null;
         Button layoutTool = null;
         bluetoothButton = null;
@@ -245,6 +245,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             if ("SETTINGS".equals(toolName)) settingsTool = tool;
             else if ("BLUETOOTH".equals(toolName)) bluetoothButton = tool;
             else if ("LAYOUT".equals(toolName)) layoutTool = tool;
+            else if ("RECENTS".equals(toolName)) tool.setOnClickListener(v -> sendBluetoothNavigation(3));
             else if ("BACK".equals(toolName)) tool.setOnClickListener(v -> sendBluetoothNavigation(2));
             else if ("HOME".equals(toolName)) tool.setOnClickListener(v -> sendBluetoothNavigation(1));
             else if ("VOL -".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 1));
@@ -414,12 +415,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                             updateStatus();
                             continue;
                         }
-                        if (state == 3) {
-                            boolean emulator = input.readBoolean();
-                            String foregroundPackage = input.readUTF();
-                            runOnUiThread(() -> applyAutoDetectedInputMode(emulator, foregroundPackage));
-                            continue;
-                        }
                         if (state != 0 && state != 1) {
                             throw new IllegalStateException("Status kontrol dari Host tidak valid");
                         }
@@ -524,15 +519,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 ? "Gamepad aktif • Touch HID nonaktif"
                 : "Touch HID aktif • Gamepad nonaktif");
         updateStatus();
-    }
-
-    private void applyAutoDetectedInputMode(boolean emulator, String packageName) {
-        if ("__usage_access_required__".equals(packageName)) {
-            controlStatus = "Auto Detect: izinkan Usage Access pada Host";
-            updateStatus();
-            return;
-        }
-        setInputMode(emulator, "Auto Detect • " + packageName);
     }
 
     private void sendClipboardToHost() {
