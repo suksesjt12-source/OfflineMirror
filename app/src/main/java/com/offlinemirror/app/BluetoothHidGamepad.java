@@ -13,7 +13,7 @@ import android.util.Log;
 
 import java.util.concurrent.Executor;
 
-/** Composite Bluetooth HID gamepad and relative mouse peripheral. */
+/** Standard Bluetooth HID virtual gamepad peripheral. */
 public final class BluetoothHidGamepad {
     public interface StatusListener {
         void onStatus(String message);
@@ -21,15 +21,10 @@ public final class BluetoothHidGamepad {
 
     private static final String TAG = "OfflineMirror-BluetoothHID";
     private static final int GAMEPAD_REPORT_ID = 1;
-    private static final int MOUSE_REPORT_ID = 2;
-    private static final int MAX_MOUSE_BACKLOG = 4096;
 
     /*
-     * Report 1: Android Game Pad collection.
-     * Existing button usages are preserved; usages 13/14 add L3/R3 stick clicks.
-     * D-pad is a HID hat; X/Y and Z/Rz are the two sticks; C5/C4 are triggers.
-     *
-     * Report 2: separate relative Mouse collection (buttons, X, Y, wheel).
+     * Report 1: Android Game Pad collection. Button usages include L3/R3;
+     * D-pad is a HID hat, X/Y and Z/Rz are analog sticks, C5/C4 are triggers.
      */
     private static final byte[] REPORT_DESCRIPTOR = new byte[] {
         0x05, 0x01, 0x09, 0x05, (byte) 0xA1, 0x01,
@@ -56,19 +51,7 @@ public final class BluetoothHidGamepad {
         0x05, 0x02, 0x09, (byte) 0xC5, 0x09, (byte) 0xC4,
         0x15, 0x00, 0x26, (byte) 0xFF, 0x00, 0x75, 0x08,
         (byte) 0x95, 0x02, (byte) 0x81, 0x02,
-        (byte) 0xC0,
-
-        0x05, 0x01, 0x09, 0x02, (byte) 0xA1, 0x01,
-        (byte) 0x85, 0x02,
-        0x09, 0x01, (byte) 0xA1, 0x00,
-        0x05, 0x09, 0x19, 0x01, 0x29, 0x03,
-        0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
-        (byte) 0x95, 0x03, (byte) 0x81, 0x02,
-        0x75, 0x05, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
-        0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x38,
-        0x15, (byte) 0x81, 0x25, 0x7F, 0x75, 0x08,
-        (byte) 0x95, 0x03, (byte) 0x81, 0x06,
-        (byte) 0xC0, (byte) 0xC0
+        (byte) 0xC0
     };
 
     private final Context context;
@@ -85,18 +68,8 @@ public final class BluetoothHidGamepad {
     private byte[] pendingGamepadReport;
     private int lastQueuedButtons = -1;
 
-    // Mouse movement is accumulated, not replaced by the latest touch sample.
-    private int pendingMouseDx;
-    private int pendingMouseDy;
-    private int pendingMouseWheel;
-    private int pendingMouseButtons;
-    private int lastQueuedMouseButtons = -1;
-    private boolean mouseFlushScheduled;
-
     private final Runnable sendLatestGamepadReport =
             () -> sendPendingGamepadReport();
-    private final Runnable sendLatestMouseReport =
-            () -> flushPendingMouseReport();
 
     public BluetoothHidGamepad(Context context, StatusListener listener) {
         this.context = context.getApplicationContext();
@@ -122,7 +95,7 @@ public final class BluetoothHidGamepad {
             if (!requested) {
                 status("Bluetooth HID Device tidak didukung firmware HP ini");
             } else {
-                status("Mengaktifkan gamepad + mouse Bluetooth HID...");
+                status("Mengaktifkan gamepad Bluetooth HID...");
             }
         } catch (SecurityException denied) {
             status("Izin Bluetooth tidak diberikan");
@@ -153,15 +126,13 @@ public final class BluetoothHidGamepad {
             }
 
             hidDevice = (BluetoothHidDevice) proxy;
-            byte compositeSubclass = (byte) (
-                    BluetoothHidDevice.SUBCLASS1_COMBO
-                            | BluetoothHidDevice.SUBCLASS2_GAMEPAD);
+            byte gamepadSubclass = (byte) BluetoothHidDevice.SUBCLASS2_GAMEPAD;
             BluetoothHidDeviceAppSdpSettings sdp =
                     new BluetoothHidDeviceAppSdpSettings(
-                            "OfflineMirror Gamepad + Mouse",
-                            "OfflineMirror Composite Controller and Mouse",
+                            "OfflineMirror Gamepad",
+                            "OfflineMirror Virtual Gamepad",
                             "OfflineMirror",
-                            compositeSubclass,
+                            gamepadSubclass,
                             REPORT_DESCRIPTOR);
 
             Executor executor = context.getMainExecutor();
@@ -169,8 +140,8 @@ public final class BluetoothHidGamepad {
                     sdp, null, null, executor, callback);
             status(accepted
                     ? (target == null
-                        ? "HID siap dipair dari Bluetooth Host..."
-                        : "Mendaftarkan gamepad + mouse Bluetooth...")
+                        ? "HID gamepad siap dipair dari Bluetooth Host..."
+                        : "Mendaftarkan gamepad Bluetooth...")
                     : "Pendaftaran Bluetooth HID ditolak sistem");
         }
 
@@ -198,7 +169,7 @@ public final class BluetoothHidGamepad {
             }
 
             if (target == null) {
-                status("HID siap • pair OfflineMirror Gamepad + Mouse dari Host");
+                status("HID siap • pair OfflineMirror Gamepad dari Host");
             } else {
                 status("HID siap • menyambungkan ke Host...");
                 try {
@@ -217,9 +188,8 @@ public final class BluetoothHidGamepad {
             if (connected) {
                 target = device;
                 resetQueuedState();
-                status("Bluetooth terhubung • gamepad + mouse aktif");
+                status("Bluetooth terhubung • gamepad aktif");
                 sendState(0, 0f, 0f, 0f, 0f);
-                sendMouse(0, 0, 0, 0);
             } else if (state == BluetoothProfile.STATE_CONNECTING) {
                 status("Bluetooth HID sedang menyambungkan...");
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
@@ -232,7 +202,8 @@ public final class BluetoothHidGamepad {
         public void onGetReport(
                 BluetoothDevice device, byte type, byte id, int bufferSize) {
             if (hidDevice != null
-                    && type == BluetoothHidDevice.REPORT_TYPE_INPUT) {
+                    && type == BluetoothHidDevice.REPORT_TYPE_INPUT
+                    && id == GAMEPAD_REPORT_ID) {
                 try {
                     hidDevice.replyReport(device, type, id, neutralReport(id));
                 } catch (SecurityException ignored) {
@@ -267,82 +238,6 @@ public final class BluetoothHidGamepad {
                 reportHandler.postDelayed(sendLatestGamepadReport, 8L);
             }
         }
-    }
-
-    /**
-     * Relative mouse input. Press/release edges are always sent immediately.
-     * Motion is accumulated and emitted in signed HID-sized chunks so rapid
-     * trackpad movement is not lost when reports arrive faster than Bluetooth.
-     */
-    public void sendMouse(int dx, int dy, int buttons, int wheel) {
-        if (!connected || reportHandler == null) return;
-
-        int safeButtons = buttons & 7;
-        synchronized (reportLock) {
-            boolean buttonEdge = safeButtons != lastQueuedMouseButtons;
-            lastQueuedMouseButtons = safeButtons;
-            pendingMouseButtons = safeButtons;
-
-            if (buttonEdge) {
-                byte[] edgeReport = buildMouseReport(safeButtons, 0, 0, 0);
-                reportHandler.post(
-                        () -> sendReportNow(MOUSE_REPORT_ID, edgeReport));
-            }
-
-            if (dx != 0 || dy != 0 || wheel != 0) {
-                pendingMouseDx = clampBacklog(pendingMouseDx + dx);
-                pendingMouseDy = clampBacklog(pendingMouseDy + dy);
-                pendingMouseWheel = clampBacklog(pendingMouseWheel + wheel);
-
-                if (!mouseFlushScheduled) {
-                    mouseFlushScheduled = true;
-                    reportHandler.postDelayed(sendLatestMouseReport, 2L);
-                }
-            }
-        }
-    }
-
-    private void flushPendingMouseReport() {
-        final int dx;
-        final int dy;
-        final int wheel;
-        final int buttons;
-        boolean morePending;
-
-        synchronized (reportLock) {
-            dx = takeChunk(pendingMouseDx);
-            dy = takeChunk(pendingMouseDy);
-            wheel = takeChunk(pendingMouseWheel);
-
-            pendingMouseDx -= dx;
-            pendingMouseDy -= dy;
-            pendingMouseWheel -= wheel;
-            buttons = pendingMouseButtons;
-
-            morePending = pendingMouseDx != 0
-                    || pendingMouseDy != 0 || pendingMouseWheel != 0;
-
-            if (morePending && connected && reportHandler != null) {
-                reportHandler.postDelayed(sendLatestMouseReport, 2L);
-            } else {
-                mouseFlushScheduled = false;
-            }
-        }
-
-        if (dx != 0 || dy != 0 || wheel != 0) {
-            sendReportNow(
-                    MOUSE_REPORT_ID,
-                    buildMouseReport(buttons, dx, dy, wheel));
-        }
-    }
-
-    private int takeChunk(int value) {
-        return Math.max(-127, Math.min(127, value));
-    }
-
-    private int clampBacklog(int value) {
-        return Math.max(-MAX_MOUSE_BACKLOG,
-                Math.min(MAX_MOUSE_BACKLOG, value));
     }
 
     private void sendPendingGamepadReport() {
@@ -392,19 +287,7 @@ public final class BluetoothHidGamepad {
         return report;
     }
 
-    private byte[] buildMouseReport(int buttons, int dx, int dy, int wheel) {
-        return new byte[] {
-                (byte) (buttons & 0x07),
-                (byte) clampSignedByte(dx),
-                (byte) clampSignedByte(dy),
-                (byte) clampSignedByte(wheel)
-        };
-    }
-
     private byte[] neutralReport(int id) {
-        if (id == MOUSE_REPORT_ID) {
-            return new byte[] {0, 0, 0, 0};
-        }
         return new byte[] {
                 0, 0, 8,
                 (byte) 128, (byte) 128, (byte) 128, (byte) 128,
@@ -437,20 +320,10 @@ public final class BluetoothHidGamepad {
         return (byte) Math.max(0, Math.min(255, encoded));
     }
 
-    private int clampSignedByte(int value) {
-        return Math.max(-127, Math.min(127, value));
-    }
-
     private void resetQueuedState() {
         synchronized (reportLock) {
             lastQueuedButtons = -1;
-            lastQueuedMouseButtons = -1;
             pendingGamepadReport = null;
-            pendingMouseDx = 0;
-            pendingMouseDy = 0;
-            pendingMouseWheel = 0;
-            pendingMouseButtons = 0;
-            mouseFlushScheduled = false;
 
             if (reportHandler != null) {
                 reportHandler.removeCallbacksAndMessages(null);
@@ -463,8 +336,6 @@ public final class BluetoothHidGamepad {
             if (connected && hidDevice != null && target != null) {
                 hidDevice.sendReport(
                         target, GAMEPAD_REPORT_ID, neutralReport(GAMEPAD_REPORT_ID));
-                hidDevice.sendReport(
-                        target, MOUSE_REPORT_ID, neutralReport(MOUSE_REPORT_ID));
             }
             if (hidDevice != null) {
                 if (registered) hidDevice.unregisterApp();
