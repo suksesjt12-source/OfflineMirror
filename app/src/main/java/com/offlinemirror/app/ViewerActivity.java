@@ -666,7 +666,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         if (bonded == null || bonded.isEmpty()) {
             startBluetoothGamepad(null);
             new AlertDialog.Builder(this).setTitle("Bluetooth HID siap dipair")
-                    .setMessage("Viewer mendaftarkan controller gabungan gamepad + mouse. Karena profil Bluetooth diperbarui, hapus pairing OfflineMirror lama dari daftar Bluetooth Host terlebih dahulu, lalu pair ulang OfflineMirror Gamepad + Mouse. Biarkan Viewer tetap terbuka. Setelah pairing, input tombol, analog, dan pointer mouse akan aktif melalui Bluetooth HID.")
+                    .setMessage("Viewer mendaftarkan perangkat Bluetooth HID gamepad. Hapus pairing lama OfflineMirror Gamepad + Mouse dari pengaturan Bluetooth HP Host, lalu pair ulang perangkat OfflineMirror Gamepad. Biarkan Viewer tetap terbuka. Sentuhan langsung, Home, dan Kembali dikirim melalui Wi-Fi; tombol virtual dan analog menggunakan Bluetooth HID.")
                     .setPositiveButton("Mengerti", null)
                     .setNeutralButton("Setelan Bluetooth Viewer", (d, w) ->
                             startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)))
@@ -1142,7 +1142,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                         + videoStatus + pingText + "  •  " + audioStatus + "  •  " + controlStatus);
                 if (gamepadStatus != null) {
                     gamepadStatus.setText(bluetoothStatus
-                            + " • Bluetooth HID gamepad + mouse");
+                            + " • Bluetooth HID gamepad");
                 }
             }
         });
