@@ -209,7 +209,7 @@ public final class BluetoothHidGamepad {
             }
 
             if (target == null) {
-                status("HID siap • pair OfflineMirror Touchscreen dari Host (eksperimental)");
+                status("HID siap • pair OfflineMirror Controller dari Host");
             } else {
                 status("HID siap • menyambungkan Touchscreen + Gamepad...");
                 try {
