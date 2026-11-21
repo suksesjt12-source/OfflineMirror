@@ -38,8 +38,7 @@ private static final byte[] GAMEPAD_REPORT_DESCRIPTOR = new byte[] {
         (byte) 0xC0,
 };
 
-// Separate Bluetooth profile: experimental single-contact Touchscreen.
-// Separate Bluetooth HID profile: experimental single-contact Touchscreen.
+// Experimental single-contact Touchscreen descriptor.
 private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         // Experimental HID Digitizer Touch Screen: one absolute contact (Report ID 2).
         0x05, 0x0D, 0x09, 0x04, (byte) 0xA1, 0x01,
@@ -203,6 +202,19 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 return;
             }
             registrationRequested = false;
+            // Mode may change while registerApp() is still pending. Never connect
+            // the Host with a descriptor for the previous input mode.
+            if (registeredProfileGamepad != gamepadMode && hidDevice != null) {
+                profileSwitchPending = true;
+                try {
+                    hidDevice.unregisterApp();
+                } catch (Exception error) {
+                    profileSwitchPending = false;
+                    Log.e(TAG, "HID profile mismatch unregister failed", error);
+                    status("Profil HID tidak cocok dan gagal didaftarkan ulang");
+                }
+                return;
+            }
             if (target == null) {
                 status("Jaringan 2 • pair OfflineMirror Controller dari HP Host");
             } else {
@@ -473,24 +485,6 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 0, 0,
                 (byte) 128, (byte) 128, (byte) 128, (byte) 128
         };
-    }
-
-    // HID hat values: 0=up, clockwise in 45-degree increments, 8=neutral.
-    private int hatValue(int buttons) {
-        boolean up = (buttons & (1 << 10)) != 0;
-        boolean down = (buttons & (1 << 11)) != 0;
-        boolean left = (buttons & (1 << 12)) != 0;
-        boolean right = (buttons & (1 << 13)) != 0;
-
-        if (up && right) return 1;
-        if (right && down) return 3;
-        if (down && left) return 5;
-        if (left && up) return 7;
-        if (up) return 0;
-        if (right) return 2;
-        if (down) return 4;
-        if (left) return 6;
-        return 8;
     }
 
     private byte toAxis(float value) {
