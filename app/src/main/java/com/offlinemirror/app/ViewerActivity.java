@@ -82,6 +82,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private boolean showPerformance = true;
     private float gamepadSensitivity = 1.0f;
     private int gamepadPreset = 0;
+    private int scrollUpSensitivity = 1;
+    private int scrollDownSensitivity = 1;
     private volatile long pingSentAt = 0L;
     private volatile long pingRttMs = -1L;
     private volatile Thread pingThread;
@@ -123,6 +125,10 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         showPerformance = preferences.getBoolean("performance_overlay", true);
         gamepadSensitivity = preferences.getFloat("gamepad_sensitivity", 1.0f);
         gamepadPreset = preferences.getInt("gamepad_preset", 0);
+        scrollUpSensitivity = Math.max(1, Math.min(10,
+                preferences.getInt("mouse_scroll_up_sensitivity", 1)));
+        scrollDownSensitivity = Math.max(1, Math.min(10,
+                preferences.getInt("mouse_scroll_down_sensitivity", 1)));
         float savedGamepadX = preferences.getFloat("gamepad_offset_x", 0f);
         float savedGamepadY = preferences.getFloat("gamepad_offset_y", 0f);
         mousePositionSaved = preferences.contains("mouse_position_x")
@@ -210,6 +216,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         mouseOverlay = new MouseOverlayView(this);
+        mouseOverlay.setScrollSensitivity(scrollUpSensitivity, scrollDownSensitivity);
         mouseOverlay.setListener((dx, dy, buttons, wheel) -> {
             if (bluetoothGamepad != null) bluetoothGamepad.sendMouse(dx, dy, buttons, wheel);
         });
@@ -541,10 +548,12 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         LinearLayout panel = new LinearLayout(this);
         panel.setPadding(dp(18), dp(10), dp(18), dp(4));
         panel.setOrientation(LinearLayout.VERTICAL);
+
         TextView mappingInfo = new TextView(this);
-        mappingInfo.setText("Mapping Android Standard: A, B, X, Y, L1, R1, L2, R2, Select, Start, D-pad, dua analog. Gunakan tombol LAYOUT di toolbar untuk menggeser seluruh susunan gamepad dan mouse.");
+        mappingInfo.setText("Gerakkan pointer dengan satu jari, double-tap untuk klik kiri, dan geser dua jari untuk scroll. Tombol samping hanya untuk scroll atas/bawah.");
         mappingInfo.setTextSize(12);
         panel.addView(mappingInfo);
+
         TextView presetLabel = new TextView(this);
         presetLabel.setText("Layout gamepad");
         panel.addView(presetLabel);
@@ -554,6 +563,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 android.R.layout.simple_spinner_dropdown_item, presets));
         preset.setSelection(gamepadPreset);
         panel.addView(preset);
+
         TextView sensitivityLabel = new TextView(this);
         sensitivityLabel.setText("Sensitivitas analog");
         panel.addView(sensitivityLabel);
@@ -562,30 +572,78 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         sensitivity.setProgress(Math.max(0, Math.min(130,
                 Math.round((gamepadSensitivity - 0.5f) * 100f))));
         panel.addView(sensitivity);
+
+        TextView scrollTitle = new TextView(this);
+        scrollTitle.setText("Sensitivitas scroll mouse");
+        scrollTitle.setTextColor(Color.rgb(80, 145, 220));
+        scrollTitle.setTypeface(null, 1);
+        scrollTitle.setPadding(0, dp(12), 0, dp(4));
+        panel.addView(scrollTitle);
+
+        TextView scrollUpLabel = new TextView(this);
+        scrollUpLabel.setText("Scroll atas: " + scrollUpSensitivity + "x");
+        panel.addView(scrollUpLabel);
+        SeekBar scrollUp = new SeekBar(this);
+        scrollUp.setMax(9);
+        scrollUp.setProgress(scrollUpSensitivity - 1);
+        scrollUp.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
+                scrollUpLabel.setText("Scroll atas: " + (value + 1) + "x");
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStopTrackingTouch(SeekBar bar) {}
+        });
+        panel.addView(scrollUp);
+
+        TextView scrollDownLabel = new TextView(this);
+        scrollDownLabel.setText("Scroll bawah: " + scrollDownSensitivity + "x");
+        panel.addView(scrollDownLabel);
+        SeekBar scrollDown = new SeekBar(this);
+        scrollDown.setMax(9);
+        scrollDown.setProgress(scrollDownSensitivity - 1);
+        scrollDown.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
+                scrollDownLabel.setText("Scroll bawah: " + (value + 1) + "x");
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStopTrackingTouch(SeekBar bar) {}
+        });
+        panel.addView(scrollDown);
+
         CheckBox lowLatency = new CheckBox(this);
         lowLatency.setText("Ultra Low Latency (decoder & buffer kecil)");
         lowLatency.setChecked(lowLatencyMode);
         panel.addView(lowLatency);
+
         CheckBox performance = new CheckBox(this);
         performance.setText("Tampilkan FPS, bitrate, ping, dan RAM aplikasi");
         performance.setChecked(showPerformance);
         panel.addView(performance);
-        new AlertDialog.Builder(this).setTitle("Gamepad & Network")
-                .setView(panel)
+
+        android.widget.ScrollView settingsScroll = new android.widget.ScrollView(this);
+        settingsScroll.setFillViewport(false);
+        settingsScroll.addView(panel);
+        new AlertDialog.Builder(this).setTitle("Pengaturan kontrol")
+                .setView(settingsScroll)
                 .setNegativeButton("Batal", null)
                 .setPositiveButton("Simpan", (dialog, which) -> {
                     gamepadPreset = preset.getSelectedItemPosition();
                     gamepadSensitivity = 0.5f + sensitivity.getProgress() / 100f;
+                    scrollUpSensitivity = scrollUp.getProgress() + 1;
+                    scrollDownSensitivity = scrollDown.getProgress() + 1;
                     lowLatencyMode = lowLatency.isChecked();
                     showPerformance = performance.isChecked();
                     getSharedPreferences("offline_mirror_settings", MODE_PRIVATE).edit()
                             .putInt("gamepad_preset", gamepadPreset)
                             .putFloat("gamepad_sensitivity", gamepadSensitivity)
+                            .putInt("mouse_scroll_up_sensitivity", scrollUpSensitivity)
+                            .putInt("mouse_scroll_down_sensitivity", scrollDownSensitivity)
                             .putBoolean("low_latency", lowLatencyMode)
                             .putBoolean("performance_overlay", showPerformance)
                             .apply();
                     gamepadOverlay.setLayoutPreset(gamepadPreset);
                     gamepadOverlay.setSensitivity(gamepadSensitivity);
+                    mouseOverlay.setScrollSensitivity(scrollUpSensitivity, scrollDownSensitivity);
                     Toast.makeText(this, "Pengaturan disimpan", Toast.LENGTH_SHORT).show();
                 }).show();
     }

@@ -1,4 +1,4 @@
-# OfflineMirror 1.37.0
+# OfflineMirror 1.38.0
 
 OfflineMirror mirrors an Android display to another Android phone over the same private Wi-Fi or hotspot. Internet access is not required.
 
@@ -20,7 +20,7 @@ OfflineMirror mirrors an Android display to another Android phone over the same 
 - Mouse movement is accumulated before reports are sent. Fast trackpad movement is split into valid signed HID packets instead of replacing earlier movement samples.
 - Mouse button press/release transitions are sent independently from movement so clicks are not lost.
 - The Viewer now uses one pointer only on the Host; no duplicate software cursor is drawn over the mirrored image.
-- The trackpad supports double-tap left-click, dedicated left/right click zones, and dedicated scroll-up/scroll-down controls.
+- The Viewer trackpad uses one-finger pointer movement, double-tap left-click, and two-finger vertical scrolling. Its side strip contains only dedicated scroll-up and scroll-down buttons.
 - The mouse panel and complete gamepad overlay can be repositioned with the LAYOUT tool. Their normalized positions are saved locally and restored after reconnect/orientation changes.
 - Gamepad button pointers are reconciled against active MotionEvent pointers. A final pointer-up/cancel always sends a neutral state, and queued axis reports are serialized with D-pad/button edges so stale reports cannot reassert a released direction.
 - Viewer decoder output buffers are drained while waiting for input buffers. Video sockets have a stall timeout and automatically reconnect; the decoder is released per connection but the Surface is retained across network retries.
@@ -32,7 +32,7 @@ Android's controller usage table maps A/B/X/Y to Button usages 1/2/4/5, L1/R1 to
 
 ## Mouse controls
 
-In Viewer, tap **MOUSE** to show the trackpad. Drag the left region to move the mouse pointer on the Host; double-tap the trackpad for left click. The right-side controls provide left click, right click, scroll up, and scroll down. The operating-system pointer is displayed by the Host only.
+In Viewer, tap **MOUSE** to show the native-feeling trackpad. One finger moves the Host pointer, double-tap performs a left click, and a two-finger vertical swipe scrolls. The side strip contains only scroll-up and scroll-down buttons. Adjust each direction independently in **SETTINGS → Sensitivitas scroll mouse** (1x–10x). These values set the wheel steps per button press and scale the two-finger scroll gesture. The operating-system pointer is displayed by the Host only.
 
 ## HUD
 
