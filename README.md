@@ -14,7 +14,7 @@ OfflineMirror mirrors an Android display to another Android phone over the same 
 
 ## Composite Bluetooth HID: Touchscreen, Gamepad and 3-button navigation
 
-- One Bluetooth HID device advertises the Game Pad collection plus the experimental HID Digitizer / Touch Screen collection. Recent Apps, Home and Back are exposed as Consumer Control usages in the same Game Pad collection; no second Bluetooth device or Accessibility service is used.
+- One Bluetooth HID device advertises the Game Pad collection plus the experimental HID Digitizer / Touch Screen collection. Recent Apps, Home and Back use a separate Consumer Control report ID in the same composite Bluetooth HID device; no second Bluetooth device or Accessibility service is used.
 - The Viewer has one manual toggle to switch between Touch HID and Gamepad. The selected mode disables reports from the other input surface.
 - The touchscreen report uses absolute X/Y coordinates and one contact identifier. Tap and drag with one finger on the mirrored video area.
 - Touch, Gamepad, Recent Apps, Home and Back reports all use the same Bluetooth HID connection. Wi-Fi is used for screen/audio streaming and utility commands only; emulator detection and Usage Access are not used.
