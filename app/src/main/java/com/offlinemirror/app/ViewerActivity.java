@@ -84,6 +84,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private boolean lowLatencyMode = true;
     private boolean showPerformance = true;
     private float gamepadSensitivity = 1.0f;
+    private float gamepadDeadzone = 0.04f;
+    private int gamepadResponseCurve = 0;
     private int gamepadPreset = 0;
     private volatile long pingSentAt = 0L;
     private volatile long pingRttMs = -1L;
@@ -125,6 +127,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         lowLatencyMode = preferences.getBoolean("low_latency", true);
         showPerformance = preferences.getBoolean("performance_overlay", true);
         gamepadSensitivity = preferences.getFloat("gamepad_sensitivity", 1.0f);
+        gamepadDeadzone = preferences.getFloat("gamepad_deadzone", 0.04f);
+        gamepadResponseCurve = preferences.getInt("gamepad_response_curve", 0);
         gamepadPreset = preferences.getInt("gamepad_preset", 0);
         videoPort = getIntent().getIntExtra("videoPort", VIDEO_PORT);
         audioPort = getIntent().getIntExtra("audioPort", AUDIO_PORT);
@@ -187,6 +191,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
         gamepadOverlay = new GamepadOverlayView(this);
         gamepadOverlay.setSensitivity(gamepadSensitivity);
+        gamepadOverlay.setDeadzone(gamepadDeadzone);
+        gamepadOverlay.setResponseCurve(gamepadResponseCurve);
         gamepadOverlay.setLayoutPreset(gamepadPreset);
         for (int elementId : GamepadOverlayView.LAYOUT_ELEMENT_IDS) {
             float x = preferences.getFloat("gamepad_element_" + elementId + "_x", 0f);
@@ -218,8 +224,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         root.addView(videoFrame, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Wi-Fi carries mirroring; one composite Bluetooth HID profile exposes
-        // both touchscreen and gamepad reports at the same time.
+        // Wi-Fi carries mirroring; Bluetooth registers one independent HID profile at a time.
         FrameLayout.LayoutParams gamepadBarParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(44), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         gamepadBarParams.topMargin = dp(48);
@@ -606,7 +611,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         panel.setOrientation(LinearLayout.VERTICAL);
 
         TextView mappingInfo = new TextView(this);
-        mappingInfo.setText("Ketuk, tahan, atau geser pada bagian gambar Host yang tidak tertutup kontrol virtual. Sentuhan dikirim lewat Wi-Fi. Aktifkan layanan OfflineMirror Remote Touch pada HP Host terlebih dahulu.");
+        mappingInfo.setText("Pilih profil Bluetooth Touch HID atau Gamepad HID melalui tombol BLUETOOTH. Pengiriman sentuhan HID masih bergantung pada dukungan digitizer di Android Host. Atur layout dan respons analog di bawah.");
         mappingInfo.setTextSize(12);
         panel.addView(mappingInfo);
 
@@ -629,6 +634,31 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 Math.round((gamepadSensitivity - 0.5f) * 100f))));
         panel.addView(sensitivity);
 
+        TextView deadzoneLabel = new TextView(this);
+        deadzoneLabel.setText("Deadzone analog: " + Math.round(gamepadDeadzone * 100f) + "%");
+        panel.addView(deadzoneLabel);
+        SeekBar deadzone = new SeekBar(this);
+        deadzone.setMax(20);
+        deadzone.setProgress(Math.round(gamepadDeadzone * 100f));
+        deadzone.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
+                deadzoneLabel.setText("Deadzone analog: " + value + "%");
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStopTrackingTouch(SeekBar bar) {}
+        });
+        panel.addView(deadzone);
+
+        TextView curveLabel = new TextView(this);
+        curveLabel.setText("Kurva respons analog");
+        panel.addView(curveLabel);
+        Spinner curve = new Spinner(this);
+        curve.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"Linear", "Dynamic", "Precision"}));
+        curve.setSelection(gamepadResponseCurve);
+        panel.addView(curve);
+
         CheckBox lowLatency = new CheckBox(this);
         lowLatency.setText("Ultra Low Latency (decoder & buffer kecil)");
         lowLatency.setChecked(lowLatencyMode);
@@ -648,16 +678,22 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 .setPositiveButton("Simpan", (dialog, which) -> {
                     gamepadPreset = preset.getSelectedItemPosition();
                     gamepadSensitivity = 0.5f + sensitivity.getProgress() / 100f;
+                    gamepadDeadzone = deadzone.getProgress() / 100f;
+                    gamepadResponseCurve = curve.getSelectedItemPosition();
                     lowLatencyMode = lowLatency.isChecked();
                     showPerformance = performance.isChecked();
                     getSharedPreferences("offline_mirror_settings", MODE_PRIVATE).edit()
                             .putInt("gamepad_preset", gamepadPreset)
                             .putFloat("gamepad_sensitivity", gamepadSensitivity)
+                            .putFloat("gamepad_deadzone", gamepadDeadzone)
+                            .putInt("gamepad_response_curve", gamepadResponseCurve)
                             .putBoolean("low_latency", lowLatencyMode)
                             .putBoolean("performance_overlay", showPerformance)
                             .apply();
                     gamepadOverlay.setLayoutPreset(gamepadPreset);
                     gamepadOverlay.setSensitivity(gamepadSensitivity);
+                    gamepadOverlay.setDeadzone(gamepadDeadzone);
+                    gamepadOverlay.setResponseCurve(gamepadResponseCurve);
                     Toast.makeText(this, "Pengaturan disimpan", Toast.LENGTH_SHORT).show();
                 }).show();
     }
