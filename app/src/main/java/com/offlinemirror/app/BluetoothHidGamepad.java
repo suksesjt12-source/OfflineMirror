@@ -89,7 +89,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     private volatile boolean connected;
 
     private HandlerThread reportThread;
-    private Handler reportHandler;
+    private volatile Handler reportHandler;
     private byte[] pendingGamepadReport;
     private byte[] pendingTouchReport;
     private int lastQueuedButtons = -1;
@@ -100,9 +100,6 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     private volatile boolean profileSwitchPending = false;
     private volatile boolean registrationRequested = false;
     private volatile boolean registeredProfileGamepad = false;
-    private byte[] latestGamepadReport = new byte[] {
-            0, 0, 8, (byte) 128, (byte) 128, (byte) 128, (byte) 128, 0, 0
-    };
 
     private final Runnable sendLatestGamepadReport =
             () -> sendPendingGamepadReport();
@@ -286,10 +283,10 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         // discard every button event after switching from Touch HID to Gamepad.
         if (!connected || reportHandler == null || !gamepadMode) return;
 
+        // Keep report construction out of the shared lock. Motion events arrive on
+        // the UI thread and must never wait for Bluetooth Binder work.
+        byte[] report = buildGamepadReport(buttons, leftX, leftY, rightX, rightY);
         synchronized (reportLock) {
-            byte[] report = buildGamepadReport(
-                    buttons, leftX, leftY, rightX, rightY);
-            latestGamepadReport = report.clone();
             boolean buttonEdge = buttons != lastQueuedButtons;
             lastQueuedButtons = buttons;
 
@@ -435,21 +432,26 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     }
 
     private void sendPendingTouchReport() {
+        final byte[] report;
         synchronized (reportLock) {
-            byte[] report = pendingTouchReport;
+            report = pendingTouchReport;
             pendingTouchReport = null;
             touchReportQueued = false;
-            sendReportNow(TOUCH_REPORT_ID, report);
         }
+        // Never hold reportLock while calling the Bluetooth framework.
+        sendReportNow(TOUCH_REPORT_ID, report);
     }
 
     private void sendPendingGamepadReport() {
+        final byte[] report;
         synchronized (reportLock) {
-            byte[] report = pendingGamepadReport;
+            report = pendingGamepadReport;
             pendingGamepadReport = null;
             gamepadReportQueued = false;
-            sendReportNow(GAMEPAD_REPORT_ID, report);
         }
+        // sendReport() crosses into the Android Bluetooth stack. Releasing the
+        // shared lock first prevents UI MotionEvents from waiting on that call.
+        sendReportNow(GAMEPAD_REPORT_ID, report);
     }
 
     private void sendReportNow(int reportId, byte[] report) {
@@ -534,7 +536,6 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             lastQueuedTouchPressed = false;
             pendingTouchReport = null;
             touchReportQueued = false;
-            latestGamepadReport = neutralReport();
 
             if (reportHandler != null) {
                 reportHandler.removeCallbacksAndMessages(null);
