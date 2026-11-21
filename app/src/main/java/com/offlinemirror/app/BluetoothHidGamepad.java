@@ -53,7 +53,7 @@ private static final byte[] GAMEPAD_REPORT_DESCRIPTOR = new byte[] {
         (byte) 0xC0,
     };
 
-// Separate Bluetooth HID profile: five-contact Touchscreen.
+// Separate Bluetooth HID profile: experimental single-contact Touchscreen.
 private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         // Experimental HID Digitizer Touch Screen: one absolute contact (Report ID 2).
         0x05, 0x0D, 0x09, 0x04, (byte) 0xA1, 0x01,
@@ -95,6 +95,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     private int lastQueuedButtons = -1;
     private boolean lastQueuedTouchPressed;
     private boolean touchReportQueued;
+    private boolean gamepadReportQueued;
     private volatile boolean gamepadMode = false;
     private volatile boolean profileSwitchPending = false;
     private volatile boolean registrationRequested = false;
@@ -293,16 +294,19 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             lastQueuedButtons = buttons;
 
             if (buttonEdge) {
-                // A state transition includes the latest axes. Send it directly
-                // on the report worker and discard any obsolete axis-only frame.
+                // Button edges are always queued immediately.
                 pendingGamepadReport = null;
+                gamepadReportQueued = false;
                 reportHandler.removeCallbacks(sendLatestGamepadReport);
                 reportHandler.post(
                         () -> sendReportNow(GAMEPAD_REPORT_ID, report));
             } else {
+                // Analog movement is coalesced only while the worker is busy.
                 pendingGamepadReport = report;
-                reportHandler.removeCallbacks(sendLatestGamepadReport);
-                reportHandler.postDelayed(sendLatestGamepadReport, 8L);
+                if (!gamepadReportQueued) {
+                    gamepadReportQueued = true;
+                    reportHandler.post(sendLatestGamepadReport);
+                }
             }
         }
     }
@@ -443,6 +447,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         synchronized (reportLock) {
             byte[] report = pendingGamepadReport;
             pendingGamepadReport = null;
+            gamepadReportQueued = false;
             sendReportNow(GAMEPAD_REPORT_ID, report);
         }
     }
@@ -525,6 +530,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         synchronized (reportLock) {
             lastQueuedButtons = -1;
             pendingGamepadReport = null;
+            gamepadReportQueued = false;
             lastQueuedTouchPressed = false;
             pendingTouchReport = null;
             touchReportQueued = false;
@@ -533,6 +539,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             if (reportHandler != null) {
                 reportHandler.removeCallbacksAndMessages(null);
                 touchReportQueued = false;
+                gamepadReportQueued = false;
             }
         }
     }
