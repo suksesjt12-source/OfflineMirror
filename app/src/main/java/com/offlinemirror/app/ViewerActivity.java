@@ -97,6 +97,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private int audioPort = AUDIO_PORT;
     private int controlPort = CONTROL_PORT;
     private String viewerAddress = "IP belum tersedia";
+    private volatile String lastForegroundPackage = "";
 
     private volatile boolean running = false;
     private volatile Socket videoSocket;
@@ -468,6 +469,11 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                     // The utility socket carries only utility commands and ping.
                     while (controlLoopRunning && !candidate.isClosed()) {
                         int state = input.readUnsignedByte();
+                        if (state == 3) {
+                            String packageName = input.readUTF();
+                            handleForegroundAppEvent(packageName);
+                            continue;
+                        }
                         if (state == 2) {
                             long sentAt = pingSentAt;
                             if (sentAt > 0L) {
@@ -512,6 +518,60 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         }, "OfflineMirror-Remote-Control-Client");
         controlThread.setDaemon(true);
         controlThread.start();
+    }
+
+    private void handleForegroundAppEvent(String packageName) {
+        if (packageName == null || packageName.isEmpty()
+                || packageName.equals(lastForegroundPackage)) return;
+        lastForegroundPackage = packageName;
+        runOnUiThread(() -> {
+            android.content.SharedPreferences prefs =
+                    getSharedPreferences("offline_mirror_settings", MODE_PRIVATE);
+            int savedProfile = prefs.getInt("app_profile_" + packageName, -1);
+            String label = packageName;
+            try {
+                label = getPackageManager().getApplicationLabel(
+                        getPackageManager().getApplicationInfo(packageName, 0)).toString();
+            } catch (Exception ignored) {}
+            if (savedProfile == 0 || savedProfile == 1) {
+                boolean useGamepad = savedProfile == 0;
+                boolean changed = gamepadInputMode != useGamepad;
+                if (changed) {
+                    setInputMode(useGamepad, "Otomatis • " + label);
+                    if (bluetoothGamepad != null) {
+                        bluetoothGamepad.switchProfile(selectedHidDevice, selectedHidMode);
+                    }
+                }
+                controlStatus = "Auto profile: " + label + " → "
+                        + (useGamepad ? "Gamepad" : "Touch HID");
+            } else {
+                controlStatus = "Aplikasi Host: " + label + " • belum ada profil otomatis";
+            }
+            updateStatus();
+        });
+    }
+
+    private void saveProfileForCurrentApp(int profile) {
+        String packageName = lastForegroundPackage;
+        if (packageName == null || packageName.isEmpty()) {
+            Toast.makeText(this, "Belum menerima nama aplikasi dari Host. Pastikan Usage Access aktif di HP Host.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        getSharedPreferences("offline_mirror_settings", MODE_PRIVATE).edit()
+                .putInt("app_profile_" + packageName, profile).apply();
+        boolean useGamepad = profile == 0;
+        setInputMode(useGamepad, "Profil aplikasi tersimpan");
+        if (bluetoothGamepad != null) {
+            bluetoothGamepad.switchProfile(selectedHidDevice, selectedHidMode);
+        }
+        String label = packageName;
+        try {
+            label = getPackageManager().getApplicationLabel(
+                    getPackageManager().getApplicationInfo(packageName, 0)).toString();
+        } catch (Exception ignored) {}
+        Toast.makeText(this, "Profil " + (useGamepad ? "Gamepad" : "Touch HID")
+                + " disimpan untuk " + label, Toast.LENGTH_LONG).show();
     }
 
     private void startPingLoop(DataOutputStream output, Socket socket) {
@@ -561,7 +621,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
         gamepadInputMode = useGamepad;
         selectedHidMode = useGamepad ? BluetoothHidGamepad.InputMode.GAMEPAD : BluetoothHidGamepad.InputMode.TOUCH;
-        if (bluetoothGamepad != null) bluetoothGamepad.setInputMode(useGamepad);
         if (touchOverlay != null) touchOverlay.setVisibility(View.VISIBLE);
         if (gamepadOverlay != null) {
             gamepadOverlay.setVisibility(useGamepad ? View.VISIBLE : View.GONE);
@@ -614,6 +673,21 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         mappingInfo.setText("Pilih profil Bluetooth Touch HID atau Gamepad HID melalui tombol BLUETOOTH. Pengiriman sentuhan HID masih bergantung pada dukungan digitizer di Android Host. Atur layout dan respons analog di bawah.");
         mappingInfo.setTextSize(12);
         panel.addView(mappingInfo);
+
+        TextView autoProfileInfo = new TextView(this);
+        autoProfileInfo.setText("Aplikasi Host terdeteksi otomatis melalui Usage Access. Untuk menyimpan profil aplikasi yang sedang aktif, pilih tombol berikut.");
+        autoProfileInfo.setTextSize(12);
+        autoProfileInfo.setPadding(0, dp(8), 0, dp(4));
+        panel.addView(autoProfileInfo);
+        Button saveAppProfile = new Button(this);
+        saveAppProfile.setText("SIMPAN PROFIL UNTUK APLIKASI HOST AKTIF");
+        saveAppProfile.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Profil untuk " + (lastForegroundPackage.isEmpty()
+                        ? "aplikasi aktif" : lastForegroundPackage))
+                .setItems(new String[]{"Gamepad HID", "Touch HID"}, (dialog, which) ->
+                        saveProfileForCurrentApp(which))
+                .setNegativeButton("Batal", null).show());
+        panel.addView(saveAppProfile);
 
         TextView presetLabel = new TextView(this);
         presetLabel.setText("Layout gamepad");
