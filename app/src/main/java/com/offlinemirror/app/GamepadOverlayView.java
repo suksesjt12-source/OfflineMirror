@@ -37,7 +37,7 @@ public final class GamepadOverlayView extends View {
     private final Paint fill=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint stroke=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint label=new Paint(Paint.ANTI_ALIAS_FLAG);
-    private static final long MIN_BUTTON_PRESS_MS = 35L;
+    private static final long MIN_BUTTON_PRESS_MS = 0L;
     private final Map<Integer,Integer> buttonPointers=new HashMap<>();
     private final Map<Integer,Long> buttonDownTimes=new HashMap<>();
     private final Map<Integer,Runnable> delayedButtonReleases=new HashMap<>();
@@ -263,7 +263,7 @@ public final class GamepadOverlayView extends View {
         float cx=right?rightCX():leftCX();
         float ax=(x-cx)/Math.max(1f,stickRadius()*0.90f)*sensitivity;
         float ay=(y-(right?rightStickCY():stickCY()))/Math.max(1f,stickRadius()*0.90f)*sensitivity;
-        float d=(float)Math.hypot(ax,ay),dead=0.10f;
+        float d=(float)Math.hypot(ax,ay),dead=0.04f;
         if(d<=dead){ax=ay=0f;}else{float n=Math.min(1f,(d-dead)/(1f-dead));ax=ax/d*n;ay=ay/d*n;}
         if(right){rightX=clamp(ax,-1,1);rightY=clamp(ay,-1,1);}
         else{leftX=clamp(ax,-1,1);leftY=clamp(ay,-1,1);}
