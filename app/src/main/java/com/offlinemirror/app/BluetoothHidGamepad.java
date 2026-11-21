@@ -266,7 +266,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 return;
             }
             if (target == null) {
-                status("Jaringan 2 • pair OfflineMirror "
+                status("Jaringan 2 • pair OfflineMirror " +
                         (gamepadMode ? "Gamepad" : "Touch HID") + " dari HP Host");
             } else {
                 status("Jaringan 2 • menyambungkan " +
