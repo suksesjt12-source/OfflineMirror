@@ -276,7 +276,13 @@ public final class GamepadOverlayView extends View {
     private boolean press(MotionEvent e,int i){
         int id=e.getPointerId(i);
         Runnable oldRelease=delayedButtonReleases.remove(id);
-        if(oldRelease!=null)removeCallbacks(oldRelease);
+        if(oldRelease!=null){
+            removeCallbacks(oldRelease);
+            if(buttonPointers.remove(id)!=null){
+                buttonDownTimes.remove(id);
+                rebuildMask();emit();
+            }
+        }
         if(buttonPointers.containsKey(id)||id==leftPointer||id==rightPointer)return true;
         float x=e.getX(i),y=e.getY(i);int bit=hitButton(x,y);
         if(bit!=0){
