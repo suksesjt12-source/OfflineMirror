@@ -1,57 +1,54 @@
-# OfflineMirror 1.43.0
+# OfflineMirror 1.49.0
 
-OfflineMirror mirrors an Android display to another Android phone over the same private Wi-Fi or hotspot. Internet access is not required.
+OfflineMirror streams an Android screen to another Android phone over a shared private Wi-Fi network or hotspot. Internet access is not required.
 
-## Setup
+## Pairing and first connection
 
 1. Install OfflineMirror on both Android phones.
 2. Connect both phones to the same Wi-Fi network or hotspot.
-3. On the Host, tap **START SCREEN SHARING** and approve screen capture.
-4. On the Host, tap **SHOW PAIRING QR**.
-5. On the Viewer, scan the QR and connect to the Host.
-6. Enable Bluetooth on both phones. In Viewer, tap **PAIR BT**.
-7. Pair the device named **OfflineMirror Controller** from the Host Bluetooth settings. Keep Viewer open while using the connection.
+3. On the Host phone, tap **START SCREEN SHARING** and approve Android's screen-capture prompt.
+4. On the Host phone, tap **SHOW PAIRING QR**.
+5. On the Viewer phone, tap **SCAN HOST QR**. The app fills in the Host IP and session key, then starts the connection.
+6. Keep both phones on the same local network. If QR scanning is unavailable, enter the Host's local IPv4 address and session key manually.
 
-## Composite Bluetooth HID: Touchscreen, Gamepad and 3-button navigation
+The QR code contains the Host's private-network address, video port and a random per-session key. Stop sharing to invalidate the previous session key. Do not share the QR code or key with untrusted people.
 
-- One Bluetooth HID device advertises the Game Pad collection plus the experimental HID Digitizer / Touch Screen collection. Recent Apps, Home and Back use a separate Consumer Control report ID in the same composite Bluetooth HID device; no second Bluetooth device or Accessibility service is used.
-- The Viewer has one manual toggle to switch between Touch HID and Gamepad. The selected mode disables reports from the other input surface.
-- The touchscreen report uses absolute X/Y coordinates and one contact identifier. Tap and drag with one finger on the mirrored video area.
-- Touch, Gamepad, Recent Apps, Home and Back reports all use the same Bluetooth HID connection. Wi-Fi is used for screen/audio streaming and utility commands only; emulator detection and Usage Access are not used.
-- HID Touch Screen support is not consistent across Android versions and vendor firmware. Some Host devices may pair but ignore the touchscreen collection, or may reject the HID device. This mode is experimental and has not been verified on every Android model.
-- No root, Accessibility service, overlay permission, mouse pointer, or cursor emulation is used for this input path.
-- The gamepad supports standard Android button, hat-switch, stick and trigger usages, including L3/R3 and analog triggers.
-- LAYOUT moves each gamepad button, D-pad direction and analog stick independently. Each position is saved locally.
-- D-pad hit targets are spaced apart so adjacent directions cannot steal each other's touch.
-- Gamepad button pointers are reconciled against active MotionEvent pointers. A final pointer-up/cancel sends a neutral state, and queued axis reports are serialized with button edges to avoid stale inputs.
-- A focus loss, gamepad overlay hide, or activity shutdown sends neutral controller state.
+## Streaming
 
-## Automatic mapping and compatibility
+- Video uses H.264 over TCP port 48888.
+- Optional playback audio uses TCP port 48889. It requires Android 10+ and apps that permit playback capture.
+- Remote utility commands use TCP port 48890 for authenticated clipboard, volume, media and ping messages.
+- The Host video server supports up to four Viewer connections. Audio and utility control are separate single-client channels.
+- Resolution, frame-rate cap, bitrate and adaptive FPS can be selected on the Host. Actual performance depends on the encoder, Wi-Fi quality, thermal state and Android background restrictions.
+- Video reconnects independently from the utility channel. Audio capture and playback retry after temporary disconnects.
 
-Android's controller usage table maps A/B/X/Y to Button usages 1/2/4/5, L1/R1 to usages 7/8, the D-pad to the hat switch, the left stick to X/Y, the right stick to Z/Rz, and the triggers to Simulation Controls C5/C4. Compatible games and emulators can receive these standard Android input events. Individual games can still use a custom mapping screen.
+## Bluetooth HID input
 
-## HUD
+The Viewer phone acts as the Bluetooth HID peripheral. Tap **PAIR BT** in Viewer, then pair the advertised OfflineMirror device from the Host phone's Android Bluetooth settings. Keep Viewer open while using Bluetooth input.
 
-Use LAYOUT to enter edit mode, then drag each gamepad button, D-pad direction, or analog stick independently. Tap SELESAI when finished. Each position is saved automatically. Use HUD − to hide the status area and toolbar. HUD + restores the controls. The setting is remembered.
+Only one HID profile is registered at a time:
 
-## Network channels
+- **Touch HID**: experimental absolute-coordinate touchscreen input with one contact. It may be ignored or rejected by some Android Bluetooth HID Host implementations and vendor firmware.
+- **Gamepad**: a standard Game Pad collection with 16 digital button usages and four 8-bit axes (X, Y, Z and Rz) for two analog sticks. D-pad directions are digital buttons in this descriptor.
 
-- Video: TCP port 48888 (H.264)
-- Audio: TCP port 48889 (optional; Android 10+ and capture-compatible apps)
-- Utility commands: TCP port 48890 (authenticated clipboard, volume, media and ping)
-- Wi-Fi carries video/audio and utility signals. Touchscreen, Gamepad, HOME and BACK input reports all use the same Bluetooth HID connection.
+Switch between Touch HID and Gamepad with the Viewer mode toggle. The HID connection may need to be paired again after changing the descriptor/profile on some devices. This build does not expose separate Consumer Control reports for Home, Back or Recent Apps, and does not expose analog trigger axes. Controller compatibility still depends on the Android Host and the target game.
 
-## Compatibility notes
+The HUD editor lets the Viewer reposition individual gamepad controls. Positions, sensitivity and layout settings are stored locally. Focus loss and activity shutdown release active gamepad/touch states.
 
-- Screen mirroring: Android 5.0+
-- Bluetooth HID Device mode: Android 9+ and vendor HID Device support on the Viewer
-- Experimental HID Touch Screen input: Android Host support depends on the Bluetooth HID Host implementation and vendor firmware; not guaranteed
-- HOME/BACK Consumer usages: Android Host should map AC Home (0x0C/0x0223) to KEYCODE_HOME and AC Back (0x0C/0x0224) to KEYCODE_BACK; vendor compatibility can vary
-- Audio playback capture: Android 10+ and capture-compatible apps
+No root or Accessibility service is used by the Bluetooth HID input path.
 
-## Automatic input-mode switching and navigation
+## Compatibility and limitations
 
-- Recognized package-name markers include PPSSPP, Dolphin, RetroArch, AetherSX2/NetherSX2, Citra/Lime3DS, Yuzu/Sudachi, Winlator, DuckStation, Lemuroid, DraStic and GameHub. Some vendor builds use different package names, so detection is not guaranteed for every emulator.
-- The Viewer toolbar **BACK** and **HOME** buttons send standard AC Back / AC Home Consumer usages in the composite Bluetooth HID Game Pad report. Android maps these usages to KEYCODE_BACK and KEYCODE_HOME on compatible HID hosts.
-- When an emulator is detected, the app releases active touch input, sends a neutral touchscreen report, disables Touch HID input and enables Gamepad reports. When a regular app is active, it releases Gamepad state, disables Gamepad reports and re-enables Touch HID. The same Bluetooth HID pairing remains connected in both modes.
-- The Viewer bottom button can manually switch between Touch HID and Gamepad when needed.
+- Screen mirroring: Android 5.0+ (API 21+).
+- Bluetooth HID Device mode: Android 9.0+ (API 28+) and vendor firmware that exposes HID Device support.
+- Playback audio capture: Android 10+ (API 29+) and capture-compatible apps.
+- Touch HID is experimental and is not guaranteed to work on every Host phone.
+- Wi-Fi video and Bluetooth input are independent transports. Wi-Fi carries the stream and utility channel; Bluetooth carries the selected HID profile.
+
+## Troubleshooting
+
+- **QR scanner does not open**: grant camera permission and close other apps currently using the camera.
+- **Viewer cannot connect**: confirm both phones are on the same Wi-Fi/hotspot, use the Host's current IP, and create a new QR after restarting sharing.
+- **Black or frozen video**: keep the Host screen awake during initial testing, lower resolution/bitrate, and check whether Android has stopped the capture service.
+- **No audio**: confirm Android 10+, playback-capture permission/context, and that the source app allows capture.
+- **Bluetooth does not appear**: enable Bluetooth on both phones, tap PAIR BT on Viewer, approve discoverability when requested, and pair from Host settings. Some vendors do not support Bluetooth HID Device mode.
