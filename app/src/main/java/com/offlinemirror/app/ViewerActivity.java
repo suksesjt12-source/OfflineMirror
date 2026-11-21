@@ -24,6 +24,7 @@ import android.provider.Settings;
 import android.content.pm.PackageManager;
 import android.Manifest;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
