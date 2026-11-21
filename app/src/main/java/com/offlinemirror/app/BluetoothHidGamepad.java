@@ -243,8 +243,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 status("Bluetooth HID sedang menyambungkan...");
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
                 resetQueuedState();
-                status(profileSwitchPending ? "Jaringan 2 • mengganti profil Bluetooth..."
-                        : "Jaringan 2 • Bluetooth terputus, sambungkan ulang dari Viewer");
+                status("Bluetooth " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID")
+                        + " terputus; sambungkan ulang dari Viewer");
             }
         }
 
@@ -419,8 +419,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             if (!device.sendReport(receiver, reportId, report)) {
                 Log.w(TAG, "Bluetooth stack rejected HID report " + reportId);
                 if (reportId == GAMEPAD_REPORT_ID || reportId == TOUCH_REPORT_ID) {
-                    status("Jaringan 2 • HP Host menolak laporan " +
-                            (gamepadMode ? "Gamepad" : "Touch HID"));
+                    status("HP Host menolak laporan Bluetooth " +
+                            (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID"));
                 }
             }
         } catch (SecurityException denied) {
