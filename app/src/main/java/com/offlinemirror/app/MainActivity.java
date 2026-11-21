@@ -276,7 +276,7 @@ public class MainActivity extends Activity {
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Touchscreen satu jari, Gamepad, serta tombol Recent Apps, HOME, dan BACK berada dalam satu perangkat Bluetooth HID. Pilih mode Touch HID atau Gamepad secara manual dari Viewer; hanya mode terpilih yang mengirim input. Viewer menyediakan navigasi Android melalui Bluetooth, dua stick analog, D-pad, tombol bahu, dan tombol aksi. Gunakan LAYOUT untuk mengatur posisi gamepad. Wi-Fi membawa video, audio opsional, serta perintah utilitas clipboard/volume/media. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
+        note.setText("QR berisi IP lokal, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung hingga 4 Viewer video. Bluetooth mendaftarkan satu profil pada satu waktu: Touch HID satu jari atau Gamepad, lalu mode diganti manual dari Viewer. Profil Gamepad menyediakan tombol digital dan dua stick analog; arah D-pad dipetakan sebagai tombol. Build ini belum menyediakan laporan tombol Home/Back/Recent Apps atau trigger analog. Touch HID bersifat eksperimental dan kompatibilitasnya bergantung pada firmware HP Host. Wi-Fi membawa video, audio opsional, serta perintah clipboard/volume/media. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
