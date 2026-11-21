@@ -786,17 +786,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 bluetoothButton.setText(message.contains("aktif")
                         ? "JARINGAN 2: AKTIF" : "JARINGAN 2: BT");
             }
-            if (message.contains("mode sebelumnya dipertahankan")
-                    && bluetoothGamepad != null) {
-                gamepadInputMode = true;
-                if (touchOverlay != null) touchOverlay.setVisibility(View.VISIBLE);
-                if (gamepadOverlay != null) gamepadOverlay.setVisibility(View.VISIBLE);
-                if (overlayToggleButton != null) {
-                    overlayToggleButton.setText("HYBRID: TOUCH + GAMEPAD");
-                }
-                controlStatus = "Bluetooth HID Hybrid aktif: Touch + Gamepad.";
-                updateStatus();
-            }
         }));
         bluetoothStatus = device == null
                 ? "Mendaftarkan Bluetooth HID " + (selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD ? "Gamepad..." : "Touch HID...")
@@ -1261,7 +1250,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                         + videoStatus + pingText + "  •  " + audioStatus + "  •  " + controlStatus);
                 if (gamepadStatus != null) {
                     gamepadStatus.setText(bluetoothStatus
-                            + " • Jaringan 2: HID Hybrid Touch + Gamepad");
+                            + " • Bluetooth HID: " + (selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD ? "Gamepad" : "Touch"));
                 }
             }
         });
