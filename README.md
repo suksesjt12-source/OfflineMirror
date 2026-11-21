@@ -1,4 +1,4 @@
-# OfflineMirror 1.52.0
+# OfflineMirror 1.53.0
 
 OfflineMirror streams an Android screen to another Android phone over a shared private Wi-Fi network or hotspot. Internet access is not required.
 
@@ -17,23 +17,25 @@ The QR code contains the Host's private-network address, video port and a random
 
 - Video uses H.264 over TCP port 48888.
 - Optional playback audio uses TCP port 48889. It requires Android 10+ and apps that permit playback capture.
-- Remote utility commands use TCP port 48890 for authenticated clipboard, volume, media and ping messages.
+- Remote utility commands use TCP port 48890 for authenticated clipboard, volume, media, ping and foreground-app profile events.
 - The Host video server supports up to four Viewer connections. Audio and utility control are separate single-client channels.
 - Resolution, frame-rate cap, bitrate and adaptive FPS can be selected on the Host. Actual performance depends on the encoder, Wi-Fi quality, thermal state and Android background restrictions.
 - Video reconnects independently from the utility channel. Audio capture and playback retry after temporary disconnects.
 
 ## Bluetooth HID input
 
-The Viewer phone acts as one Bluetooth HID peripheral at a time. Select the desired mode from the **MODE** control:
+The Viewer phone acts as one Bluetooth HID peripheral at a time. Select the desired mode from the Bluetooth mode selector. The Viewer can also switch the active HID registration automatically when the Host foreground app changes, if a per-app profile has been saved:
 
 - **Gamepad HID** registers a standard gamepad descriptor with 16 digital buttons and four 8-bit axes for the two analog sticks.
 - **Touch HID** registers a separate digitizer/touchscreen descriptor and sends absolute screen coordinates.
 
-These are independent Bluetooth HID registrations, not a composite device. Switching modes stops and unregisters the active HID application before registering the other descriptor. The Host may require the old OfflineMirror Bluetooth pairing to be removed and the newly advertised mode to be paired again. Keep Viewer open while pairing.
+These are independent Bluetooth HID registrations, not a composite device. Switching modes stops and unregisters the active HID application before registering the other descriptor. The Bluetooth bond normally remains stored, but the HID connection can briefly disconnect and reconnect while the profile changes.
 
 Gamepad input is sent on button edges immediately and analog updates are coalesced on a dedicated high-priority worker. If the previously paired Host drops the HID connection while the Viewer remains active, the Viewer makes a guarded reconnect attempt. The virtual stick has a configurable 0–20% deadzone, sensitivity, and Linear/Dynamic/Precision response curves. Button edges are sent without an artificial hold delay. Physical-controller feel still depends on the Host Bluetooth stack, report scheduling, and the game. L2/R2 are digital buttons in this build; analog trigger axes are not exposed.
 
 Touch HID currently supports one absolute contact. Multi-touch is not advertised by this descriptor. Touchscreen HID support varies substantially by Android version and vendor firmware; some phones accept the pairing but do not route digitizer reports into ordinary touch input.
+
+**Smart App Profiles:** enable Usage Access for OfflineMirror on the Host phone when starting Host mode. The Host sends the foreground app package name over the authenticated local control channel; it does not send screen contents. In Viewer → control settings, save Gamepad HID or Touch HID for the currently active Host app. When that app becomes foreground again, Viewer switches the overlay and HID registration. Apps without a saved profile leave the current mode unchanged. Usage Access must be granted manually in Android Settings; first-time Bluetooth pairing still requires Android's normal user confirmation. Vendor task managers and usage-access restrictions may delay or suppress app-change events.
 
 The HUD editor lets the Viewer reposition individual gamepad controls. Positions, sensitivity, deadzone, response curve and layout settings are stored locally. Focus loss and activity shutdown release active gamepad/touch states. No root or Accessibility service is used by the Bluetooth HID input path.
 
@@ -43,7 +45,7 @@ The HUD editor lets the Viewer reposition individual gamepad controls. Positions
 - Bluetooth HID Device mode: Android 9.0+ (API 28+) and vendor firmware that exposes HID Device support.
 - Playback audio capture: Android 10+ (API 29+) and capture-compatible apps.
 - Touch HID is experimental and is not guaranteed to work on every Host phone.
-- Wi-Fi video and Bluetooth input are independent transports. Wi-Fi carries the stream and utility channel; Bluetooth carries the composite Touch + Gamepad HID profile.
+- Wi-Fi video and Bluetooth input are independent transports. Wi-Fi carries the stream, utilities and foreground-app events; Bluetooth carries one active HID profile at a time.
 
 ## Troubleshooting
 
