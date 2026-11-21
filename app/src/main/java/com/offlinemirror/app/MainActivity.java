@@ -408,7 +408,41 @@ public class MainActivity extends Activity {
         return bitmap;
     }
 
+    private boolean hasUsageAccess() {
+        try {
+            android.app.AppOpsManager appOps =
+                    (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+            return appOps != null && appOps.checkOpNoThrow(
+                    android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(), getPackageName())
+                    == android.app.AppOpsManager.MODE_ALLOWED;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private void beginHostFlow() {
+        if (!hasUsageAccess()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Aktifkan Smart App Profiles")
+                    .setMessage("Agar Viewer dapat mengganti profil Touch HID/Gamepad sesuai aplikasi yang sedang dibuka di HP Host, OfflineMirror memerlukan izin Usage Access. Izin ini dipakai untuk membaca nama paket aplikasi aktif, bukan isi layar atau pesan. Kamu bisa melewatinya; mirroring tetap berjalan tetapi pergantian profil otomatis tidak aktif.")
+                    .setPositiveButton("Buka Usage Access", (dialog, which) -> {
+                        try {
+                            startActivity(new Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS));
+                            Toast.makeText(this, "Aktifkan Usage Access untuk OfflineMirror, lalu kembali dan tekan SHARE SCREEN lagi.", Toast.LENGTH_LONG).show();
+                        } catch (Exception error) {
+                            Toast.makeText(this, "Pengaturan Usage Access tidak tersedia pada perangkat ini.", Toast.LENGTH_LONG).show();
+                        }
+                    })
+                    .setNegativeButton("Lanjut tanpa otomatis", (dialog, which) ->
+                            continueHostFlow())
+                    .show();
+            return;
+        }
+        continueHostFlow();
+    }
+
+    private void continueHostFlow() {
         if (audioCheck.isChecked() && Build.VERSION.SDK_INT >= 29 &&
                 checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -615,7 +649,7 @@ public class MainActivity extends Activity {
                 + (screenOffModeCheck != null && screenOffModeCheck.isChecked()
                 ? "Mode layar mati siap: hubungkan Viewer lalu tekan tombol Power Host sekali. "
                 : "")
-                + "Salin IP Host dan pairing key ke HP Viewer. Mode Touch HID/Gamepad diganti manual dari Viewer.");
+                + "Salin IP Host dan pairing key ke HP Viewer. Smart App Profiles dapat mengganti Touch HID/Gamepad otomatis setelah Usage Access diaktifkan pada Host dan profil aplikasi disimpan dari Viewer.");
     }
 
     @Override
