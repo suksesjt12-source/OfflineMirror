@@ -18,7 +18,7 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <application
         android:allowBackup="false"
-        android:label="OfflineMirror"
+        android:label="OfflineMirror"\n        android:icon="@drawable/ic_launcher"\n        android:roundIcon="@drawable/ic_launcher"
         android:allowAudioPlaybackCapture="true"
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.Material.NoActionBar"

@@ -307,7 +307,7 @@ public final class BluetoothHidGamepad {
     /** Android-standard button, hat, dual-stick and analog trigger report. */
     public void sendState(
             int buttons, float leftX, float leftY, float rightX, float rightY) {
-        if (!connected || reportHandler == null || !gamepadMode) return;
+        // The overlay visibility is controlled by ViewerActivity. Do not gate reports\n        // on a second mode flag here: that flag can lag a UI transition and silently\n        // discard every button event after switching from Touch HID to Gamepad.\n        if (!connected || reportHandler == null) return;
 
         synchronized (reportLock) {
             byte[] report = buildGamepadReport(
