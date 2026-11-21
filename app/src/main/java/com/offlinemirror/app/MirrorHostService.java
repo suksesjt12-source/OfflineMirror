@@ -2,6 +2,9 @@ package com.offlinemirror.app;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
+import android.app.AppOpsManager;
+import android.app.usage.UsageEvents;
+import android.app.usage.UsageStatsManager;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
@@ -28,6 +31,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.os.Process;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.Display;
@@ -80,6 +84,12 @@ public class MirrorHostService extends Service {
     private volatile byte[] latestStreamHeader;
     private volatile Thread videoAcceptThread;
     private Socket controlClientSocket;
+    private volatile DataOutputStream controlClientOutput;
+    private volatile boolean autoEmulatorMode = false;
+    private volatile Thread emulatorMonitorThread;
+    private volatile boolean detectedEmulator = false;
+    private volatile String detectedForegroundPackage = "";
+    private volatile boolean usageAccessAvailable = false;
 
     private MediaProjection projection;
     private MediaProjection.Callback projectionCallback;
@@ -110,6 +120,7 @@ public class MirrorHostService extends Service {
         audioEnabled = intent.getBooleanExtra("audioEnabled", false);
         keepCpuAwakeWhenScreenOff = intent.getBooleanExtra(
                 "keepCpuAwakeWhenScreenOff", false);
+        autoEmulatorMode = intent.getBooleanExtra("autoEmulatorMode", false);
         sessionKey = intent.getStringExtra("sessionKey");
         if (sessionKey == null || sessionKey.length() < 16 || sessionKey.length() > 128
                 || !sessionKey.matches("[A-Za-z0-9_-]+")) {
@@ -159,6 +170,7 @@ public class MirrorHostService extends Service {
             projection.registerCallback(projectionCallback, new Handler(getMainLooper()));
             running = true;
             if (keepCpuAwakeWhenScreenOff) registerScreenStateReceiver();
+            if (autoEmulatorMode) startEmulatorMonitor();
 
             // Prepare the local listening ports before the Viewer connects.
             videoServerSocket = openServerSocket(VIDEO_PORT);
@@ -696,15 +708,20 @@ public class MirrorHostService extends Service {
                 output = new DataOutputStream(
                         new BufferedOutputStream(client.getOutputStream()));
 
-                // Authenticated utility channel only; no touch or gamepad input.
+                // This channel is authenticated by the existing session key.
                 output.writeInt(CONTROL_MAGIC);
                 output.flush();
+                controlClientOutput = output;
+                if (autoEmulatorMode) sendEmulatorModeUpdate(detectedEmulator,
+                        usageAccessAvailable ? detectedForegroundPackage : "__usage_access_required__");
 
                 while (running && !client.isClosed()) {
                     int type = input.readUnsignedByte();
                     if (type == 7) {
-                        output.writeByte(2);
-                        output.flush();
+                        synchronized (output) {
+                            output.writeByte(2);
+                            output.flush();
+                        }
                         continue;
                     }
                     if (type == 5) {
@@ -719,8 +736,20 @@ public class MirrorHostService extends Service {
                                         ClipData.newPlainText("OfflineMirror", safeText));
                             });
                         }
-                        output.writeByte(accepted ? 1 : 0);
-                        output.flush();
+                        synchronized (output) {
+                            output.writeByte(accepted ? 1 : 0);
+                            output.flush();
+                        }
+                        continue;
+                    }
+                    if (type == 8) {
+                        int action = input.readUnsignedByte();
+                        boolean accepted = RemoteNavigationAccessibilityService
+                                .requestGlobalNavigation(action);
+                        synchronized (output) {
+                            output.writeByte(accepted ? 1 : 0);
+                            output.flush();
+                        }
                         continue;
                     }
                     if (type == 6) {
@@ -743,8 +772,10 @@ public class MirrorHostService extends Service {
                         } else {
                             accepted = false;
                         }
-                        output.writeByte(accepted ? 1 : 0);
-                        output.flush();
+                        synchronized (output) {
+                            output.writeByte(accepted ? 1 : 0);
+                            output.flush();
+                        }
                         continue;
                     }
                 }
@@ -758,7 +789,109 @@ public class MirrorHostService extends Service {
                 try { if (output != null) output.close(); } catch (Exception ignored) {}
                 try { if (client != null) client.close(); } catch (Exception ignored) {}
                 if (controlClientSocket == client) controlClientSocket = null;
+                if (controlClientOutput == output) controlClientOutput = null;
             }
+        }
+    }
+
+    private boolean hasUsageAccess() {
+        try {
+            AppOpsManager appOps = (AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+            return appOps != null && appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), getPackageName())
+                    == AppOpsManager.MODE_ALLOWED;
+        } catch (Exception error) {
+            android.util.Log.w("OfflineMirror", "Usage Access check failed", error);
+            return false;
+        }
+    }
+
+    private void startEmulatorMonitor() {
+        if (emulatorMonitorThread != null && emulatorMonitorThread.isAlive()) return;
+        emulatorMonitorThread = new Thread(() -> {
+            long lastQuery = System.currentTimeMillis() - 30_000L;
+            String lastPublishedState = null;
+            boolean hadAccess = false;
+            UsageStatsManager usage = (UsageStatsManager)
+                    getSystemService(Context.USAGE_STATS_SERVICE);
+            while (running && autoEmulatorMode) {
+                long now = System.currentTimeMillis();
+                boolean allowed = hasUsageAccess();
+                if (!allowed) {
+                    usageAccessAvailable = false;
+                    detectedEmulator = false;
+                    detectedForegroundPackage = "";
+                    hadAccess = false;
+                    if (!"__usage_access_required__".equals(lastPublishedState)) {
+                        sendEmulatorModeUpdate(false, "__usage_access_required__");
+                        lastPublishedState = "__usage_access_required__";
+                    }
+                } else if (usage != null) {
+                    if (!hadAccess) lastQuery = now - 30_000L;
+                    try {
+                        UsageEvents events = usage.queryEvents(lastQuery, now);
+                        UsageEvents.Event event = new UsageEvents.Event();
+                        String foreground = detectedForegroundPackage;
+                        while (events != null && events.hasNextEvent()) {
+                            events.getNextEvent(event);
+                            int type = event.getEventType();
+                            if (type == UsageEvents.Event.MOVE_TO_FOREGROUND
+                                    || (Build.VERSION.SDK_INT >= 29
+                                    && type == UsageEvents.Event.ACTIVITY_RESUMED)) {
+                                foreground = event.getPackageName();
+                            }
+                        }
+                        if (foreground != null && !foreground.isEmpty()) {
+                            boolean isEmulator = isKnownEmulatorPackage(foreground);
+                            String state = (isEmulator ? "1:" : "0:") + foreground;
+                            usageAccessAvailable = true;
+                            detectedEmulator = isEmulator;
+                            detectedForegroundPackage = foreground;
+                            if (!state.equals(lastPublishedState)) {
+                                sendEmulatorModeUpdate(isEmulator, foreground);
+                                lastPublishedState = state;
+                            }
+                        }
+                    } catch (Exception error) {
+                        android.util.Log.w("OfflineMirror",
+                                "Emulator foreground detection failed", error);
+                    }
+                    hadAccess = true;
+                }
+                lastQuery = now;
+                try { Thread.sleep(900L); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }, "OfflineMirror-Emulator-Detector");
+        emulatorMonitorThread.setDaemon(true);
+        emulatorMonitorThread.start();
+    }
+
+    private boolean isKnownEmulatorPackage(String packageName) {
+        if (packageName == null) return false;
+        String value = packageName.toLowerCase(java.util.Locale.US);
+        String[] markers = {"ppsspp", "dolphinemu", "retroarch", "aethersx2",
+                "nethersx2", "citra", "lime3ds", "yuzu", "sudachi", "winlator",
+                "duckstation", "lemuroid", "drastic", "mupen", "gamehub", "egggame"};
+        for (String marker : markers) if (value.contains(marker)) return true;
+        return false;
+    }
+
+    private void sendEmulatorModeUpdate(boolean isEmulator, String packageName) {
+        DataOutputStream output = controlClientOutput;
+        if (output == null) return;
+        try {
+            synchronized (output) {
+                output.writeByte(3);
+                output.writeBoolean(isEmulator);
+                output.writeUTF(packageName == null ? "" : packageName);
+                output.flush();
+            }
+        } catch (Exception error) {
+            android.util.Log.w("OfflineMirror", "Could not publish emulator mode", error);
         }
     }
 
@@ -977,6 +1110,10 @@ public class MirrorHostService extends Service {
 
     private void stopStreaming() {
         running = false;
+        Thread detector = emulatorMonitorThread;
+        if (detector != null) detector.interrupt();
+        emulatorMonitorThread = null;
+        controlClientOutput = null;
         sessionKey = "";
         displayIsOff = false;
         unregisterScreenStateReceiver();

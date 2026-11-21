@@ -1,4 +1,4 @@
-# OfflineMirror 1.41.0
+# OfflineMirror 1.42.0
 
 OfflineMirror mirrors an Android display to another Android phone over the same private Wi-Fi or hotspot. Internet access is not required.
 
@@ -46,3 +46,14 @@ Use LAYOUT to enter edit mode, then drag each gamepad button, D-pad direction, o
 - Bluetooth HID Device mode: Android 9+ and vendor HID Device support on the Viewer
 - Experimental HID Touch Screen input: Android Host support depends on the Bluetooth HID Host implementation and vendor firmware; not guaranteed
 - Audio playback capture: Android 10+ and capture-compatible apps
+
+
+## Automatic emulator mode, navigation and floating controls
+
+- Enable **Auto Detect: emulator aktif → otomatis Gamepad** on the Host and grant OfflineMirror **Usage Access** in Android Settings. The Host checks foreground app events locally and tells the Viewer to show the gamepad overlay for recognized emulator packages.
+- Recognized package-name markers include PPSSPP, Dolphin, RetroArch, AetherSX2/NetherSX2, Citra/Lime3DS, Yuzu/Sudachi, Winlator, DuckStation, Lemuroid, DraStic and GameHub. Some vendor builds use different package names, so detection is not guaranteed for every emulator.
+- The detector reads foreground package identifiers only. It does not collect screen contents or send usage data to an internet service. Detection requires Android Usage Access and can vary by firmware.
+- Enable **OfflineMirror Home dan Kembali** in Android Accessibility Settings on the Host. The Viewer toolbar's **BACK** and **HOME** buttons send global navigation requests over the authenticated local control channel.
+- **FLOAT** on the Viewer opens a draggable overlay panel with BACK and HOME buttons. Android 6.0+ requires the Viewer to be allowed to display over other apps. The panel runs as a visible foreground service and can be closed with × or by closing the Viewer session.
+- Home/Back remains unavailable until the Host Accessibility service is explicitly enabled by the user. Floating controls relay actions through the active Viewer session, so the Viewer session must remain alive.
+- Automatic switching changes which input overlay is visible; it does not change Bluetooth pairing or inject touch events.
