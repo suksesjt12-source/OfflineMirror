@@ -481,7 +481,7 @@ public final class BluetoothHidGamepad {
 
         try {
             if (!device.sendReport(receiver, reportId, report)) {
-                Log.w(TAG, "Bluetooth stack rejected HID report " + reportId);
+                Log.w(TAG, "Bluetooth stack rejected HID report " + reportId);\n                if (reportId == GAMEPAD_REPORT_ID) {\n                    status("Gamepad: HP penerima menolak laporan HID");\n                }
             }
         } catch (SecurityException denied) {
             status("Izin Bluetooth Connect diperlukan");
