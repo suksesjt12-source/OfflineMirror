@@ -307,7 +307,10 @@ public final class BluetoothHidGamepad {
     /** Android-standard button, hat, dual-stick and analog trigger report. */
     public void sendState(
             int buttons, float leftX, float leftY, float rightX, float rightY) {
-        // The overlay visibility is controlled by ViewerActivity. Do not gate reports\n        // on a second mode flag here: that flag can lag a UI transition and silently\n        // discard every button event after switching from Touch HID to Gamepad.\n        if (!connected || reportHandler == null) return;
+        // The overlay visibility is controlled by ViewerActivity. Do not gate reports
+        // on a second mode flag here: that flag can lag a UI transition and silently
+        // discard every button event after switching from Touch HID to Gamepad.
+        if (!connected || reportHandler == null) return;
 
         synchronized (reportLock) {
             byte[] report = buildGamepadReport(
@@ -481,7 +484,10 @@ public final class BluetoothHidGamepad {
 
         try {
             if (!device.sendReport(receiver, reportId, report)) {
-                Log.w(TAG, "Bluetooth stack rejected HID report " + reportId);\n                if (reportId == GAMEPAD_REPORT_ID) {\n                    status("Gamepad: HP penerima menolak laporan HID");\n                }
+                Log.w(TAG, "Bluetooth stack rejected HID report " + reportId);
+                if (reportId == GAMEPAD_REPORT_ID) {
+                    status("Gamepad: HP penerima menolak laporan HID");
+                }
             }
         } catch (SecurityException denied) {
             status("Izin Bluetooth Connect diperlukan");
