@@ -1322,7 +1322,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
  */
 final class TouchOverlayView extends View {
     interface Listener { void onTouchContacts(int[] contactIds, float[] xs, float[] ys); }
-    private static final int MAX_CONTACTS = 5;
+    private static final int MAX_CONTACTS = 1;
     private final RectF content = new RectF();
     private final int[] pointerIds = {-1, -1, -1, -1, -1};
     private final float[] contactX = new float[MAX_CONTACTS];
@@ -1335,7 +1335,7 @@ final class TouchOverlayView extends View {
         setBackgroundColor(Color.TRANSPARENT);
         setWillNotDraw(true);
         setClickable(true);
-        setContentDescription("Multi-touch HID • hingga lima sentuhan bersamaan");
+        setContentDescription("Bluetooth HID Touchscreen • satu sentuhan");
     }
     void setListener(Listener value) { listener = value; }
     void setSourceAspectRatio(int width, int height) {
