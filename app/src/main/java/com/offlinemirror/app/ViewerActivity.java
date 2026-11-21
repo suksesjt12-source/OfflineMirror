@@ -710,15 +710,19 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             return;
         }
         ArrayList<BluetoothDevice> devices = new ArrayList<>(bonded);
-        String[] labels = new String[devices.size()];
+        String[] labels = new String[devices.size() + 1];
+        labels[0] = "PAIR HP HOST BARU • buat Viewer terlihat";
         for (int i = 0; i < devices.size(); i++) {
             BluetoothDevice device = devices.get(i);
             String name = device.getName();
-            labels[i] = (name == null || name.isEmpty() ? "Bluetooth device" : name)
+            labels[i + 1] = (name == null || name.isEmpty() ? "Bluetooth device" : name)
                     + " • " + device.getAddress();
         }
         new AlertDialog.Builder(this).setTitle("Jaringan 2 • Pilih HP Host Bluetooth HID")
-                .setItems(labels, (dialog, which) -> startBluetoothGamepad(devices.get(which)))
+                .setItems(labels, (dialog, which) -> {
+                    if (which == 0) startBluetoothGamepad(null);
+                    else startBluetoothGamepad(devices.get(which - 1));
+                })
                 .setNeutralButton("Pengaturan Bluetooth", (dialog, which) ->
                         startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)))
                 .setNegativeButton("Batal", null).show();
