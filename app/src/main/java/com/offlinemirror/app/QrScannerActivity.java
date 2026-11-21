@@ -58,6 +58,9 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
     private Size imageSize;
     private final AtomicBoolean decoding = new AtomicBoolean(false);
     private volatile boolean resultReturned = false;
+    private volatile boolean resumed = false;
+    private volatile boolean cameraOpening = false;
+    private volatile long lastDecodeStartedAt = 0L;
 
     private int dp(float value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
@@ -110,12 +113,14 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
     @Override
     protected void onResume() {
         super.onResume();
+        resumed = true;
         startCameraThread();
-        if (preview.isAvailable()) openCamera();
+        if (preview != null && preview.isAvailable()) openCamera();
     }
 
     @Override
     protected void onPause() {
+        resumed = false;
         closeCamera();
         stopCameraThread();
         super.onPause();
@@ -129,10 +134,14 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
     }
 
     private void stopCameraThread() {
-        if (cameraThread == null) return;
-        cameraThread.quitSafely();
+        Handler handler = cameraHandler;
+        HandlerThread thread = cameraThread;
+        if (handler != null) handler.removeCallbacksAndMessages(null);
+        if (thread == null) return;
+        thread.quitSafely();
         try {
-            cameraThread.join(1200);
+            thread.join(2000);
+            if (thread.isAlive()) thread.interrupt();
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
         }
@@ -141,7 +150,8 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
     }
 
     private void openCamera() {
-        if (cameraDevice != null || isFinishing()) return;
+        if (!resumed || cameraDevice != null || cameraOpening || isFinishing()
+                || cameraHandler == null) return;
         // Before Android 6, CAMERA permission is granted at install time.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                 && checkSelfPermission(Manifest.permission.CAMERA)
@@ -149,6 +159,7 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
             updateStatus("Izin kamera belum diberikan. Kembali lalu izinkan kamera.");
             return;
         }
+        cameraOpening = true;
         try {
             CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
             String[] ids = manager.getCameraIdList();
@@ -190,28 +201,37 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
             manager.openCamera(cameraId, new CameraDevice.StateCallback() {
                 @Override
                 public void onOpened(CameraDevice camera) {
+                    cameraOpening = false;
+                    if (!resumed || isFinishing()) {
+                        camera.close();
+                        return;
+                    }
                     cameraDevice = camera;
                     createPreviewSession();
                 }
 
                 @Override
                 public void onDisconnected(CameraDevice camera) {
+                    cameraOpening = false;
                     camera.close();
-                    cameraDevice = null;
-                    updateStatus("Kamera terputus.");
+                    if (cameraDevice == camera) cameraDevice = null;
+                    updateStatus("Kamera terputus. Kembali ke layar pemindai untuk mencoba lagi.");
                 }
 
                 @Override
                 public void onError(CameraDevice camera, int error) {
+                    cameraOpening = false;
                     camera.close();
-                    cameraDevice = null;
-                    updateStatus("Kamera gagal dibuka (kode " + error + ").");
+                    if (cameraDevice == camera) cameraDevice = null;
+                    updateStatus("Kamera gagal dibuka (kode " + error + "). Coba tutup aplikasi kamera lain.");
                 }
             }, cameraHandler);
             updateStatus("Membuka kamera...");
         } catch (SecurityException error) {
+            cameraOpening = false;
             updateStatus("Izin kamera ditolak Android.");
         } catch (Exception error) {
+            cameraOpening = false;
             android.util.Log.e("OfflineMirror", "QR camera open failed", error);
             updateStatus("Kamera tidak dapat dibuka: " + error.getMessage());
         }
@@ -221,14 +241,22 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
         if (sizes == null || sizes.length == 0) return null;
         Size best = null;
         long bestArea = 0;
+        Size smallest = null;
+        long smallestArea = Long.MAX_VALUE;
         for (Size size : sizes) {
             long area = (long) size.getWidth() * size.getHeight();
-            if (Math.max(size.getWidth(), size.getHeight()) <= 1600 && area > bestArea) {
+            if (area < smallestArea) {
+                smallest = size;
+                smallestArea = area;
+            }
+            // QR decoding needs detail, not a full-resolution camera stream.
+            // Capping the longest edge reduces allocations and thermal load on phones.
+            if (Math.max(size.getWidth(), size.getHeight()) <= 1280 && area > bestArea) {
                 best = size;
                 bestArea = area;
             }
         }
-        return best != null ? best : sizes[0];
+        return best != null ? best : smallest;
     }
 
     private void createPreviewSession() {
@@ -274,16 +302,18 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
     }
 
     private void decodeFrame(ImageReader reader) {
-        if (resultReturned) {
+        if (resultReturned || !resumed) {
             Image stale = reader.acquireLatestImage();
             if (stale != null) stale.close();
             return;
         }
-        if (!decoding.compareAndSet(false, true)) {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - lastDecodeStartedAt < 180L || !decoding.compareAndSet(false, true)) {
             Image stale = reader.acquireLatestImage();
             if (stale != null) stale.close();
             return;
         }
+        lastDecodeStartedAt = now;
         Image image = null;
         try {
             image = reader.acquireLatestImage();
@@ -293,11 +323,20 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
 
             int width = image.getWidth();
             int height = image.getHeight();
+            long pixelCount = (long) width * height;
+            if (width <= 0 || height <= 0 || pixelCount > 2_000_000L) {
+                throw new IllegalStateException("Resolusi frame kamera terlalu besar");
+            }
             ByteBuffer yBuffer = planes[0].getBuffer();
             int rowStride = planes[0].getRowStride();
             int pixelStride = planes[0].getPixelStride();
             int base = yBuffer.position();
-            byte[] luma = new byte[width * height];
+            long lastRequired = (long) base + (long) (height - 1) * rowStride
+                    + (long) (width - 1) * pixelStride;
+            if (rowStride <= 0 || pixelStride <= 0 || lastRequired >= yBuffer.limit()) {
+                throw new IllegalStateException("Buffer kamera YUV tidak lengkap");
+            }
+            byte[] luma = new byte[(int) pixelCount];
             for (int row = 0; row < height; row++) {
                 int rowStart = base + row * rowStride;
                 int dst = row * width;
@@ -375,12 +414,14 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
     }
 
     private void updateStatus(String message) {
+        if (isFinishing()) return;
         runOnUiThread(() -> {
-            if (status != null) status.setText(message);
+            if (!isFinishing() && status != null) status.setText(message);
         });
     }
 
     private void closeCamera() {
+        cameraOpening = false;
         try {
             if (captureSession != null) {
                 captureSession.stopRepeating();
@@ -394,6 +435,7 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
         }
         cameraDevice = null;
         if (imageReader != null) {
+            try { imageReader.setOnImageAvailableListener(null, null); } catch (Exception ignored) {}
             try { imageReader.close(); } catch (Exception ignored) {}
         }
         imageReader = null;
@@ -405,7 +447,7 @@ public class QrScannerActivity extends Activity implements TextureView.SurfaceTe
 
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
-        openCamera();
+        if (resumed) openCamera();
     }
 
     @Override
