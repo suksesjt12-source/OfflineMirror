@@ -24,35 +24,21 @@ public final class BluetoothHidGamepad {
     private static final int TOUCH_REPORT_ID = 2;
 
 // Separate Bluetooth HID profile: Gamepad.
+// Standalone, conservative HID Gamepad descriptor. D-pad is encoded as four
+// buttons instead of a Hat Switch to avoid host-specific null-state handling.
 private static final byte[] GAMEPAD_REPORT_DESCRIPTOR = new byte[] {
         0x05, 0x01, 0x09, 0x05, (byte) 0xA1, 0x01,
         (byte) 0x85, 0x01,
-
-        0x05, 0x09,
-        // Match report bit order: A, B, X, Y, L1, R1, L2, R2,
-        // Select, Start, L3, R3 -> Button usages 1 through 12.
-        0x19, 0x01, 0x29, 0x0C,
+        0x05, 0x09, 0x19, 0x01, 0x29, 0x10,
         0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
-        (byte) 0x95, 0x0C, (byte) 0x81, 0x02,
-        0x75, 0x04, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
-
-        0x05, 0x01, 0x09, 0x39,
-        0x15, 0x00, 0x25, 0x08, 0x35, 0x00,
-        0x46, 0x3B, 0x01, 0x65, 0x14, 0x75, 0x04,
-        (byte) 0x95, 0x01, (byte) 0x81, 0x42,
-        0x75, 0x04, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
-
-        0x09, 0x30, 0x09, 0x31, 0x09, 0x32, 0x09, 0x35,
+        (byte) 0x95, 0x10, (byte) 0x81, 0x02,
+        0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x32, 0x09, 0x35,
         0x15, 0x00, 0x26, (byte) 0xFF, 0x00, 0x75, 0x08,
         (byte) 0x95, 0x04, (byte) 0x81, 0x02,
-
-        0x05, 0x02, 0x09, (byte) 0xC5, 0x09, (byte) 0xC4,
-        0x15, 0x00, 0x26, (byte) 0xFF, 0x00, 0x75, 0x08,
-        (byte) 0x95, 0x02, (byte) 0x81, 0x02,
-
         (byte) 0xC0,
-    };
+};
 
+// Separate Bluetooth profile: experimental single-contact Touchscreen.
 // Separate Bluetooth HID profile: experimental single-contact Touchscreen.
 private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         // Experimental HID Digitizer Touch Screen: one absolute contact (Report ID 2).
@@ -81,16 +67,6 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     };
 
 
-
-    private static final byte[] COMPOSITE_REPORT_DESCRIPTOR = buildCompositeReportDescriptor();
-
-    private static byte[] buildCompositeReportDescriptor() {
-        byte[] descriptor = new byte[GAMEPAD_REPORT_DESCRIPTOR.length + TOUCH_REPORT_DESCRIPTOR.length];
-        System.arraycopy(GAMEPAD_REPORT_DESCRIPTOR, 0, descriptor, 0, GAMEPAD_REPORT_DESCRIPTOR.length);
-        System.arraycopy(TOUCH_REPORT_DESCRIPTOR, 0, descriptor,
-                GAMEPAD_REPORT_DESCRIPTOR.length, TOUCH_REPORT_DESCRIPTOR.length);
-        return descriptor;
-    }
 
     private final Context context;
     private final StatusListener listener;
@@ -170,11 +146,11 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         registeredProfileGamepad = pad;
         registrationRequested = true;
         byte subclass = pad ? (byte) BluetoothHidDevice.SUBCLASS2_GAMEPAD : (byte) 0x00;
+        byte[] descriptor = pad ? GAMEPAD_REPORT_DESCRIPTOR : TOUCH_REPORT_DESCRIPTOR;
         BluetoothHidDeviceAppSdpSettings sdp = new BluetoothHidDeviceAppSdpSettings(
-                "OfflineMirror Controller",
-                "OfflineMirror composite touchscreen and gamepad",
-                "OfflineMirror", BluetoothHidDevice.SUBCLASS2_GAMEPAD,
-                COMPOSITE_REPORT_DESCRIPTOR);
+                "OfflineMirror " + (pad ? "Gamepad" : "Touch"),
+                "OfflineMirror Bluetooth " + (pad ? "Gamepad" : "Touch HID"),
+                "OfflineMirror", subclass, descriptor);
         boolean ok = device.registerApp(sdp, null, null, context.getMainExecutor(), callback);
         if (!ok) registrationRequested = false;
         status(ok ? (pad ? "Jaringan 2 • profil Bluetooth Gamepad didaftarkan"
@@ -398,12 +374,23 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                     + " • menunggu registrasi Bluetooth");
             return;
         }
-        // Both report collections stay registered on one stable HID device.
-        // Switching only gates which input surface may send reports. This avoids
-        // unregister/re-register races and stale descriptor caches on the Host.
-        status("Jaringan 2 aktif • mode input " +
-                (useGamepad ? "Gamepad" : "Touch HID") +
-                (wasConnected ? " siap" : " • menunggu koneksi Host"));
+        // Register a profile-specific descriptor so the Host cannot cache a
+        // composite touchscreen/gamepad collection for a gamepad-only session.
+        if (registered && device != null) {
+            profileSwitchPending = true;
+            try {
+                device.unregisterApp();
+                status("Mengganti descriptor Bluetooth ke " +
+                        (useGamepad ? "Gamepad" : "Touch HID") + "...");
+            } catch (Exception error) {
+                profileSwitchPending = false;
+                Log.e(TAG, "HID profile switch failed", error);
+                status("Gagal mengganti profil HID: " + error.getMessage());
+            }
+        } else {
+            status("Mode input disiapkan: " + (useGamepad ? "Gamepad" : "Touch HID")
+                    + " • profil akan didaftarkan saat Bluetooth siap");
+        }
     }
 
     public boolean isConnected() {
@@ -470,28 +457,21 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
 
     private byte[] buildGamepadReport(
             int buttons, float lx, float ly, float rx, float ry) {
-        byte[] report = new byte[9];
-        int mask = buttons & 0x03FF;
-        if ((buttons & (1 << 14)) != 0) mask |= (1 << 10); // L3
-        if ((buttons & (1 << 15)) != 0) mask |= (1 << 11); // R3
-
+        byte[] report = new byte[6];
+        int mask = buttons & 0xFFFF;
         report[0] = (byte) (mask & 0xFF);
-        report[1] = (byte) ((mask >>> 8) & 0x0F);
-        report[2] = (byte) hatValue(buttons);
-        report[3] = toAxis(lx); // X
-        report[4] = toAxis(ly); // Y
-        report[5] = toAxis(rx); // Z
-        report[6] = toAxis(ry); // Rz
-        report[7] = (byte) ((buttons & (1 << 6)) != 0 ? 255 : 0); // Brake
-        report[8] = (byte) ((buttons & (1 << 7)) != 0 ? 255 : 0); // Accelerator
+        report[1] = (byte) ((mask >>> 8) & 0xFF);
+        report[2] = toAxis(lx); // X
+        report[3] = toAxis(ly); // Y
+        report[4] = toAxis(rx); // Z
+        report[5] = toAxis(ry); // Rz
         return report;
     }
 
     private byte[] neutralReport() {
         return new byte[] {
-                0, 0, 8,
-                (byte) 128, (byte) 128, (byte) 128, (byte) 128,
-                0, 0
+                0, 0,
+                (byte) 128, (byte) 128, (byte) 128, (byte) 128
         };
     }
 
