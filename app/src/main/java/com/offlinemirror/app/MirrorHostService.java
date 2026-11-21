@@ -177,7 +177,15 @@ public class MirrorHostService extends Service {
                         "Remote Control listener unavailable: " + controlError.getMessage());
             }
             if (audioEnabled && Build.VERSION.SDK_INT >= 29) {
-                audioServerSocket = openServerSocket(AUDIO_PORT);
+                try {
+                    audioServerSocket = openServerSocket(AUDIO_PORT);
+                } catch (Exception audioError) {
+                    // Audio is optional: a busy/unavailable audio port must not stop video.
+                    audioEnabled = false;
+                    android.util.Log.w("OfflineMirror",
+                            "Optional audio listener unavailable; continuing video-only",
+                            audioError);
+                }
             }
 
             int maxDimension = intent.getIntExtra("maxDimension", 1280);
