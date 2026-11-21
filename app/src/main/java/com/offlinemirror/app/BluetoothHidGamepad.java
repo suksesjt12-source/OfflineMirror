@@ -218,6 +218,15 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 return;
             }
             registrationRequested = false;
+            if (profileSwitchPending) {
+                try {
+                    if (hidDevice != null) hidDevice.unregisterApp();
+                } catch (Exception error) {
+                    profileSwitchPending = false;
+                    status("Gagal menutup profil HID sebelumnya: " + error.getMessage());
+                }
+                return;
+            }
             if (target == null) {
                 status("Pair OfflineMirror " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + " dari HP Host");
             } else {
@@ -366,6 +375,42 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     /** Select one independent Bluetooth HID personality per registration. */
     public void setInputMode(boolean showGamepadOverlay) {
         inputMode = showGamepadOverlay ? InputMode.GAMEPAD : InputMode.TOUCH;
+    }
+
+    /** Switches the active HID personality without opening a second HID proxy. */
+    public void switchProfile(BluetoothDevice newTarget, InputMode newMode) {
+        InputMode requestedMode = newMode == null ? InputMode.GAMEPAD : newMode;
+        boolean sameTarget = target == null ? newTarget == null
+                : newTarget.equals(newTarget);
+        if (inputMode == requestedMode && sameTarget && isConnected()) return;
+        BluetoothDevice previousTarget = target;
+        if (connected && hidDevice != null && previousTarget != null) {
+            try {
+                if (inputMode == InputMode.GAMEPAD)
+                    hidDevice.sendReport(previousTarget, GAMEPAD_REPORT_ID, neutralReport());
+                else
+                    hidDevice.sendReport(previousTarget, TOUCH_REPORT_ID, neutralTouchReport());
+            } catch (Exception ignored) {}
+        }
+        target = newTarget;
+        inputMode = requestedMode;
+        resetQueuedState();
+        if (hidDevice == null) {
+            start(newTarget, requestedMode);
+            return;
+        }
+        profileSwitchPending = true;
+        if (registered) {
+            try {
+                hidDevice.unregisterApp();
+            } catch (Exception error) {
+                profileSwitchPending = false;
+                status("Tidak dapat mengganti profil HID: " + error.getMessage());
+            }
+        } else if (!registrationRequested) {
+            profileSwitchPending = false;
+            registerCurrentProfile();
+        }
     }
 
     public boolean isConnected() {
