@@ -45,6 +45,8 @@ public final class GamepadOverlayView extends View {
     private Listener listener;
     private LayoutChangedListener layoutListener;
     private float sensitivity=1f;
+    private float deadzone=0.04f;
+    private int responseCurve=0;
     private int layoutPreset;
     private int buttons;
     private int leftPointer=-1,rightPointer=-1,editPointer=-1,editElement;
@@ -67,6 +69,9 @@ public final class GamepadOverlayView extends View {
     public void setListener(Listener l){listener=l;}
     public void setLayoutChangedListener(LayoutChangedListener l){layoutListener=l;}
     public void setSensitivity(float v){sensitivity=clamp(v,0.5f,1.8f);}
+    public void setDeadzone(float v){deadzone=clamp(v,0f,0.20f);}
+    /** 0=linear, 1=dynamic, 2=precision. */
+    public void setResponseCurve(int curve){responseCurve=Math.max(0,Math.min(2,curve));}
     public void setLayoutPreset(int p){layoutPreset=Math.max(0,Math.min(2,p));invalidate();}
     public void setLayoutEditMode(boolean enabled){
         editMode=enabled;editPointer=-1;editElement=0;
@@ -263,8 +268,13 @@ public final class GamepadOverlayView extends View {
         float cx=right?rightCX():leftCX();
         float ax=(x-cx)/Math.max(1f,stickRadius()*0.90f)*sensitivity;
         float ay=(y-(right?rightStickCY():stickCY()))/Math.max(1f,stickRadius()*0.90f)*sensitivity;
-        float d=(float)Math.hypot(ax,ay),dead=0.04f;
-        if(d<=dead){ax=ay=0f;}else{float n=Math.min(1f,(d-dead)/(1f-dead));ax=ax/d*n;ay=ay/d*n;}
+        float d=(float)Math.hypot(ax,ay),dead=deadzone;
+        if(d<=dead){ax=ay=0f;}else{
+            float n=Math.min(1f,(d-dead)/(1f-dead));
+            if(responseCurve==1)n=n*n*(3f-2f*n);
+            else if(responseCurve==2)n=n*n;
+            ax=ax/d*n;ay=ay/d*n;
+        }
         if(right){rightX=clamp(ax,-1,1);rightY=clamp(ay,-1,1);}
         else{leftX=clamp(ax,-1,1);leftY=clamp(ay,-1,1);}
     }
