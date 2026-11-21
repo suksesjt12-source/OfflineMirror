@@ -1,4 +1,4 @@
-# OfflineMirror 1.51.0
+# OfflineMirror 1.52.0
 
 OfflineMirror streams an Android screen to another Android phone over a shared private Wi-Fi network or hotspot. Internet access is not required.
 
@@ -31,11 +31,11 @@ The Viewer phone acts as one Bluetooth HID peripheral at a time. Select the desi
 
 These are independent Bluetooth HID registrations, not a composite device. Switching modes stops and unregisters the active HID application before registering the other descriptor. The Host may require the old OfflineMirror Bluetooth pairing to be removed and the newly advertised mode to be paired again. Keep Viewer open while pairing.
 
-Gamepad input is sent on button edges immediately and analog updates are coalesced on a dedicated high-priority worker. The virtual stick uses a 4% deadzone with no artificial button hold delay. Physical-controller feel still depends on the Host Bluetooth stack, report scheduling, and the game. L2/R2 are digital buttons in this build; analog trigger axes are not exposed.
+Gamepad input is sent on button edges immediately and analog updates are coalesced on a dedicated high-priority worker. If the previously paired Host drops the HID connection while the Viewer remains active, the Viewer makes a guarded reconnect attempt. The virtual stick has a configurable 0–20% deadzone, sensitivity, and Linear/Dynamic/Precision response curves. Button edges are sent without an artificial hold delay. Physical-controller feel still depends on the Host Bluetooth stack, report scheduling, and the game. L2/R2 are digital buttons in this build; analog trigger axes are not exposed.
 
 Touch HID currently supports one absolute contact. Multi-touch is not advertised by this descriptor. Touchscreen HID support varies substantially by Android version and vendor firmware; some phones accept the pairing but do not route digitizer reports into ordinary touch input.
 
-The HUD editor lets the Viewer reposition individual gamepad controls. Positions, sensitivity and layout settings are stored locally. Focus loss and activity shutdown release active gamepad/touch states. No root or Accessibility service is used by the Bluetooth HID input path.
+The HUD editor lets the Viewer reposition individual gamepad controls. Positions, sensitivity, deadzone, response curve and layout settings are stored locally. Focus loss and activity shutdown release active gamepad/touch states. No root or Accessibility service is used by the Bluetooth HID input path.
 
 ## Compatibility and limitations
 
