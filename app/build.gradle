@@ -10,8 +10,8 @@ android {
         applicationId "com.offlinemirror.app"
         minSdk 21
         targetSdk 35
-        versionCode 43
-        versionName "1.40.1"
+        versionCode 44
+        versionName "1.41.0"
     }
 
     compileOptions {

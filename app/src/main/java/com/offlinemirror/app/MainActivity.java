@@ -155,25 +155,6 @@ public class MainActivity extends Activity {
         screenOffHintParams.topMargin = dp(2);
         page.addView(screenOffHint, screenOffHintParams);
 
-        Button directTouchSetup = makeButton(
-                "AKTIFKAN DIRECT TOUCH DI HP HOST", Color.rgb(35, 84, 125));
-        LinearLayout.LayoutParams directTouchParams = matchWrap();
-        directTouchParams.topMargin = dp(10);
-        page.addView(directTouchSetup, directTouchParams);
-        directTouchSetup.setOnClickListener(v -> new AlertDialog.Builder(this)
-                .setTitle("Aktifkan Direct Touch")
-                .setMessage("Di HP Host, buka Pengaturan Aksesibilitas lalu aktifkan layanan OfflineMirror Remote Touch. Layanan ini meneruskan sentuhan dari Viewer yang sudah dipasangkan dan tidak membaca isi layar. Direct Touch, Home, dan Kembali tidak akan bekerja sebelum izin ini diaktifkan.")
-                .setNegativeButton("Batal", null)
-                .setPositiveButton("Buka Pengaturan", (dialog, which) -> {
-                    try {
-                        startActivity(new Intent(
-                                android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS));
-                    } catch (Exception error) {
-                        Toast.makeText(this, "Pengaturan Aksesibilitas tidak dapat dibuka.",
-                                Toast.LENGTH_LONG).show();
-                    }
-                }).show());
-
         Button startButton = makeButton("START SCREEN SHARING", Color.rgb(43, 116, 235));
         LinearLayout.LayoutParams startParams = matchWrap();
         startParams.topMargin = dp(12);
@@ -294,7 +275,7 @@ public class MainActivity extends Activity {
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Direct Touch, Home, dan Kembali dikirim melalui Wi-Fi setelah layanan Aksesibilitas diaktifkan pada Host. Tombol virtual dan analog dikirim melalui Bluetooth HID gamepad. Viewer menyediakan dua stick analog, D-pad, tombol bahu, dan tombol aksi. Gunakan LAYOUT untuk mengatur posisi tombol dan analog; posisi tersimpan otomatis. Tombol NAV menyembunyikan atau menampilkan Home dan Kembali. HUD − menyembunyikan toolbar dan HUD + menampilkannya kembali. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; Direct Touch memerlukan Android 7.0+; video memerlukan Android 5.0+ dan audio Android 10+.");
+        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Input sentuhan pada Viewer dikirim sebagai Bluetooth HID Touchscreen eksperimental bersama gamepad; pairing harus dilakukan dari Viewer dan HP Host. Touchscreen HID tidak didukung seragam oleh Android, sehingga bisa saja tidak berfungsi pada beberapa model/firmware. Viewer menyediakan tap, drag satu jari, dua stick analog, D-pad, tombol bahu, dan tombol aksi. Gunakan LAYOUT untuk mengatur posisi gamepad. Wi-Fi membawa video, audio opsional, serta perintah clipboard/volume/media. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
