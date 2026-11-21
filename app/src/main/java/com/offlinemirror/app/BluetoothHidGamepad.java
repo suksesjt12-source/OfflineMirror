@@ -157,9 +157,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 COMPOSITE_REPORT_DESCRIPTOR);
         boolean ok = device.registerApp(sdp, null, null, context.getMainExecutor(), callback);
         if (!ok) registrationRequested = false;
-        status(ok ? (pad ? "Jaringan 2 • profil Bluetooth Gamepad didaftarkan"
-                         : "Jaringan 2 • profil Bluetooth Touch HID didaftarkan")
-                  : "Pendaftaran profil Bluetooth gagal");
+        status(ok ? "Jaringan 2 • profil Bluetooth HID Hybrid didaftarkan"
+                  : "Pendaftaran profil Bluetooth HID Hybrid gagal");
     }
 
     private final BluetoothProfile.ServiceListener profileListener =
