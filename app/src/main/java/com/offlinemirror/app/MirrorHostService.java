@@ -85,6 +85,7 @@ public class MirrorHostService extends Service {
     private volatile Thread videoAcceptThread;
     private Socket controlClientSocket;
     private volatile DataOutputStream controlClientOutput;
+    private volatile Thread foregroundAppMonitorThread;
 
     private MediaProjection projection;
     private MediaProjection.Callback projectionCallback;
@@ -737,6 +738,7 @@ public class MirrorHostService extends Service {
                 output.writeInt(CONTROL_MAGIC);
                 output.flush();
                 controlClientOutput = output;
+                startForegroundAppMonitor(output, client);
 
                 while (running && !client.isClosed()) {
                     int type = input.readUnsignedByte();
@@ -804,6 +806,78 @@ public class MirrorHostService extends Service {
                 if (controlClientSocket == client) controlClientSocket = null;
                 if (controlClientOutput == output) controlClientOutput = null;
             }
+        }
+    }
+
+    private void startForegroundAppMonitor(DataOutputStream output, Socket client) {
+        Thread previous = foregroundAppMonitorThread;
+        if (previous != null) previous.interrupt();
+        foregroundAppMonitorThread = new Thread(() -> {
+            String lastPackage = "";
+            while (running && !client.isClosed()
+                    && controlClientOutput == output
+                    && !Thread.currentThread().isInterrupted()) {
+                try {
+                    String packageName = getForegroundPackageName();
+                    if (packageName != null && !packageName.isEmpty()
+                            && !packageName.equals(lastPackage)) {
+                        synchronized (output) {
+                            output.writeByte(3);
+                            output.writeUTF(packageName);
+                            output.flush();
+                        }
+                        lastPackage = packageName;
+                        android.util.Log.i("OfflineMirror", "Foreground app event: " + packageName);
+                    }
+                    Thread.sleep(900L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (Exception error) {
+                    android.util.Log.w("OfflineMirror", "Foreground app monitor: "
+                            + error.getMessage());
+                    try { Thread.sleep(1500L); }
+                    catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }
+        }, "OfflineMirror-Foreground-App-Monitor");
+        foregroundAppMonitorThread.setDaemon(true);
+        foregroundAppMonitorThread.start();
+    }
+
+    private String getForegroundPackageName() {
+        if (Build.VERSION.SDK_INT < 21) return "";
+        try {
+            AppOpsManager appOps = (AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+            if (appOps == null || appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), getPackageName())
+                    != AppOpsManager.MODE_ALLOWED) return "";
+            UsageStatsManager usage = (UsageStatsManager)
+                    getSystemService(Context.USAGE_STATS_SERVICE);
+            if (usage == null) return "";
+            long now = System.currentTimeMillis();
+            UsageEvents events = usage.queryEvents(now - 15000L, now);
+            UsageEvents.Event event = new UsageEvents.Event();
+            String foreground = "";
+            while (events != null && events.hasNextEvent()) {
+                events.getNextEvent(event);
+                int type = event.getEventType();
+                boolean enteredForeground = Build.VERSION.SDK_INT >= 29
+                        ? type == UsageEvents.Event.ACTIVITY_RESUMED
+                        : type == UsageEvents.Event.MOVE_TO_FOREGROUND;
+                if (enteredForeground && event.getPackageName() != null) {
+                    foreground = event.getPackageName();
+                }
+            }
+            return foreground;
+        } catch (SecurityException denied) {
+            return "";
+        } catch (Exception error) {
+            android.util.Log.w("OfflineMirror", "Usage access unavailable: " + error.getMessage());
+            return "";
         }
     }
 
@@ -1023,6 +1097,9 @@ public class MirrorHostService extends Service {
     private void stopStreaming() {
         running = false;
         controlClientOutput = null;
+        Thread appMonitor = foregroundAppMonitorThread;
+        if (appMonitor != null) appMonitor.interrupt();
+        foregroundAppMonitorThread = null;
         sessionKey = "";
         displayIsOff = false;
         unregisterScreenStateReceiver();
