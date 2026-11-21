@@ -162,12 +162,12 @@ public class MainActivity extends Activity {
         autoEmulatorModeCheck.setTextColor(Color.rgb(196, 207, 224));
         autoEmulatorModeCheck.setTextSize(13);
         autoEmulatorModeCheck.setChecked(true);
-        LinearLayout autoModeParams = matchWrap();
+        LinearLayout.LayoutParams autoModeParams = matchWrap();
         autoModeParams.topMargin = dp(12);
         page.addView(autoEmulatorModeCheck, autoModeParams);
 
         Button usageAccessButton = makeButton("IZINKAN DETEKSI APLIKASI", Color.rgb(43, 83, 132));
-        LinearLayout usageParams = matchWrap();
+        LinearLayout.LayoutParams usageParams = matchWrap();
         usageParams.topMargin = dp(4);
         page.addView(usageAccessButton, usageParams);
         usageAccessButton.setOnClickListener(v -> {
@@ -178,7 +178,7 @@ public class MainActivity extends Activity {
         });
 
         Button accessibilityButton = makeButton("IZINKAN TOMBOL HOME / KEMBALI", Color.rgb(43, 83, 132));
-        LinearLayout accessibilityParams = matchWrap();
+        LinearLayout.LayoutParams accessibilityParams = matchWrap();
         accessibilityParams.topMargin = dp(4);
         page.addView(accessibilityButton, accessibilityParams);
         accessibilityButton.setOnClickListener(v -> {
