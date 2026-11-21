@@ -6,6 +6,7 @@ import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.os.Build;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -43,6 +44,9 @@ public final class NetworkAddress {
     }
 
     private static String getActiveWifiIpv4(Context context) {
+        // ConnectivityManager.getActiveNetwork/getNetworkCapabilities were added in API 23.
+        // Fall back to NetworkInterface enumeration on Android 5.x (minSdk 21).
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null;
         try {
             ConnectivityManager manager =
                     (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
