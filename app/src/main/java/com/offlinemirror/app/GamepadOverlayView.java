@@ -7,6 +7,7 @@ import android.graphics.Typeface;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
+import android.os.SystemClock;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -36,7 +37,10 @@ public final class GamepadOverlayView extends View {
     private final Paint fill=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint stroke=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint label=new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static final long MIN_BUTTON_PRESS_MS = 35L;
     private final Map<Integer,Integer> buttonPointers=new HashMap<>();
+    private final Map<Integer,Long> buttonDownTimes=new HashMap<>();
+    private final Map<Integer,Runnable> delayedButtonReleases=new HashMap<>();
     private final Map<Integer,float[]> offsets=new HashMap<>();
     private Listener listener;
     private LayoutChangedListener layoutListener;
@@ -270,9 +274,16 @@ public final class GamepadOverlayView extends View {
         if(listener!=null)listener.onGamepadState(buttons,leftX,leftY,rightX,rightY);
     }
     private boolean press(MotionEvent e,int i){
-        int id=e.getPointerId(i);if(buttonPointers.containsKey(id)||id==leftPointer||id==rightPointer)return true;
+        int id=e.getPointerId(i);
+        Runnable oldRelease=delayedButtonReleases.remove(id);
+        if(oldRelease!=null)removeCallbacks(oldRelease);
+        if(buttonPointers.containsKey(id)||id==leftPointer||id==rightPointer)return true;
         float x=e.getX(i),y=e.getY(i);int bit=hitButton(x,y);
-        if(bit!=0){buttonPointers.put(id,bit);rebuildMask();emit();return true;}
+        if(bit!=0){
+            buttonPointers.put(id,bit);
+            buttonDownTimes.put(id,SystemClock.uptimeMillis());
+            rebuildMask();emit();return true;
+        }
         float r=stickRadius()+dp(18),dy=y-stickCY(),dx=x-leftCX();
         if(leftPointer==-1&&dx*dx+dy*dy<=r*r){leftPointer=id;updateStick(x,y,false);emit();return true;}
         dx=x-rightCX();dy=y-rightStickCY();
@@ -281,12 +292,37 @@ public final class GamepadOverlayView extends View {
     }
     private void release(MotionEvent e,int i){
         int id=e.getPointerId(i);
-        if(buttonPointers.remove(id)!=null){rebuildMask();emit();}
+        Integer bit=buttonPointers.get(id);
+        if(bit!=null){
+            Long downAt=buttonDownTimes.get(id);
+            long held=downAt==null?MIN_BUTTON_PRESS_MS:
+                    Math.max(0L,SystemClock.uptimeMillis()-downAt);
+            long remaining=MIN_BUTTON_PRESS_MS-held;
+            if(remaining>0L){
+                Runnable release=()->{
+                    Runnable current=delayedButtonReleases.get(id);
+                    if(current==null)return;
+                    delayedButtonReleases.remove(id);
+                    if(buttonPointers.get(id)!=null && buttonPointers.get(id).equals(bit)){
+                        buttonPointers.remove(id);
+                        buttonDownTimes.remove(id);
+                        rebuildMask();emit();
+                    }
+                };
+                delayedButtonReleases.put(id,release);
+                postDelayed(release,remaining);
+            }else{
+                buttonPointers.remove(id);buttonDownTimes.remove(id);
+                rebuildMask();emit();
+            }
+        }
         if(id==leftPointer){leftPointer=-1;leftX=leftY=0;emit();}
         if(id==rightPointer){rightPointer=-1;rightX=rightY=0;emit();}
     }
     public void releaseAllInputs(){
-        buttonPointers.clear();buttons=0;leftPointer=rightPointer=-1;
+        for(Runnable release:delayedButtonReleases.values())removeCallbacks(release);
+        delayedButtonReleases.clear();
+        buttonPointers.clear();buttonDownTimes.clear();buttons=0;leftPointer=rightPointer=-1;
         leftX=leftY=rightX=rightY=0;emit();
     }
     private boolean layoutTouch(MotionEvent e){
@@ -309,7 +345,12 @@ public final class GamepadOverlayView extends View {
     }
     private void cleanupPointers(MotionEvent e){
         boolean changed=false;Iterator<Map.Entry<Integer,Integer>> it=buttonPointers.entrySet().iterator();
-        while(it.hasNext()){Map.Entry<Integer,Integer> v=it.next();if(e.findPointerIndex(v.getKey())<0){it.remove();changed=true;}}
+        while(it.hasNext()){
+            Map.Entry<Integer,Integer> v=it.next();
+            if(e.findPointerIndex(v.getKey())<0 && !delayedButtonReleases.containsKey(v.getKey())){
+                it.remove();buttonDownTimes.remove(v.getKey());changed=true;
+            }
+        }
         if(leftPointer!=-1&&e.findPointerIndex(leftPointer)<0){leftPointer=-1;leftX=leftY=0;changed=true;}
         if(rightPointer!=-1&&e.findPointerIndex(rightPointer)<0){rightPointer=-1;rightX=rightY=0;changed=true;}
         if(changed){rebuildMask();emit();}
@@ -327,7 +368,7 @@ public final class GamepadOverlayView extends View {
             if(leftPointer!=-1||rightPointer!=-1)emit();
             return leftPointer!=-1||rightPointer!=-1||!buttonPointers.isEmpty();
         }
-        if(a==MotionEvent.ACTION_UP||a==MotionEvent.ACTION_POINTER_UP){release(e,i);if(a==MotionEvent.ACTION_UP)releaseAllInputs();return true;}
+        if(a==MotionEvent.ACTION_UP||a==MotionEvent.ACTION_POINTER_UP){release(e,i);return true;}
         if(a==MotionEvent.ACTION_CANCEL){releaseAllInputs();return true;}
         return leftPointer!=-1||rightPointer!=-1||!buttonPointers.isEmpty();
     }

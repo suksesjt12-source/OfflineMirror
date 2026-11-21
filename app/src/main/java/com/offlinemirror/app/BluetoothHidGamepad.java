@@ -59,10 +59,10 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         0x05, 0x0D, 0x09, 0x04, (byte) 0xA1, 0x01,
         (byte) 0x85, 0x02,
         0x09, 0x22, (byte) 0xA1, 0x02,
-        0x09, 0x42, 0x09, 0x32,
+        0x09, 0x42, 0x09, 0x32, 0x09, 0x47,
         0x15, 0x00, 0x25, 0x01,
-        0x75, 0x01, (byte) 0x95, 0x02, (byte) 0x81, 0x02,
-        0x75, 0x06, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
+        0x75, 0x01, (byte) 0x95, 0x03, (byte) 0x81, 0x02,
+        0x75, 0x05, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
         0x09, 0x51, 0x15, 0x00, 0x26, (byte) 0xFF, 0x00,
         0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
         0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
@@ -74,6 +74,9 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         0x05, 0x0D, 0x09, 0x54,
         0x15, 0x00, 0x25, 0x01,
         0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
+        // Contact Count Maximum feature report required by standard digitizers.
+        0x09, 0x55, 0x15, 0x01, 0x25, 0x01,
+        0x75, 0x08, (byte) 0x95, 0x01, (byte) 0xB1, 0x02,
         (byte) 0xC0
     };
 
@@ -261,15 +264,23 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         @Override
         public void onGetReport(
                 BluetoothDevice device, byte type, byte id, int bufferSize) {
-            if (hidDevice != null && type == BluetoothHidDevice.REPORT_TYPE_INPUT) {
+            if (hidDevice != null) {
                 try {
-                    int expectedReportId = gamepadMode ? GAMEPAD_REPORT_ID : TOUCH_REPORT_ID;
-                    if (id == expectedReportId) {
-                        hidDevice.replyReport(device, type, id,
-                                gamepadMode ? neutralReport() : neutralTouchReport());
+                    if (type == BluetoothHidDevice.REPORT_TYPE_INPUT) {
+                        int expectedReportId = gamepadMode ? GAMEPAD_REPORT_ID : TOUCH_REPORT_ID;
+                        if (id == expectedReportId) {
+                            hidDevice.replyReport(device, type, id,
+                                    gamepadMode ? neutralReport() : neutralTouchReport());
+                        }
+                    } else if (!gamepadMode
+                            && type == BluetoothHidDevice.REPORT_TYPE_FEATURE
+                            && id == TOUCH_REPORT_ID) {
+                        hidDevice.replyReport(device, type, id, new byte[] { 1 });
                     }
                 } catch (SecurityException ignored) {
                     // The profile can disconnect while the host requests a report.
+                } catch (Exception error) {
+                    Log.w(TAG, "HID descriptor feature report failed", error);
                 }
             }
         }
@@ -348,7 +359,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         int px = toTouchCoordinate(x);
         int py = toTouchCoordinate(y);
         return new byte[] {
-                (byte) (pressed ? 0x03 : 0x00),
+                (byte) (pressed ? 0x07 : 0x00),
                 1,
                 (byte) (px & 0xFF), (byte) ((px >>> 8) & 0xFF),
                 (byte) (py & 0xFF), (byte) ((py >>> 8) & 0xFF),
