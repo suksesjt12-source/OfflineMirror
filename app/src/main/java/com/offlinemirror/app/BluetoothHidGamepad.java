@@ -464,6 +464,10 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         return gamepadMode ? "Bluetooth Gamepad" : "Bluetooth Touch HID";
     }
 
+    private void sendNeutralReport() {
+        sendReportNow(REPORT_ID, gamepadMode ? neutralReport() : neutralTouchReport());
+    }
+
     private void sendPendingTouchReport() {
         synchronized (reportLock) {
             byte[] report = pendingTouchReport;
