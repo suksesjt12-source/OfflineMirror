@@ -260,7 +260,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 if (hidDevice == null || !hidDevice.unregisterApp()) {
                     profileSwitchPending = false;
                     registered = false;
-                    status("Profil Bluetooth lama belum dapat diganti; tekan ulang tombol mode");
+                    gamepadMode = registeredProfileGamepad;
+                    status("Profil Bluetooth gagal diganti; mode sebelumnya dipertahankan");
                 }
                 return;
             }
@@ -462,6 +463,10 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
 
     public String getActiveProfileName() {
         return gamepadMode ? "Bluetooth Gamepad" : "Bluetooth Touch HID";
+    }
+
+    public boolean isGamepadMode() {
+        return gamepadMode;
     }
 
     private void sendNeutralReport() {

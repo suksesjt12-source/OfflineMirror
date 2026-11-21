@@ -732,6 +732,23 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 bluetoothButton.setText(message.contains("aktif")
                         ? "JARINGAN 2: AKTIF" : "JARINGAN 2: BT");
             }
+            if (message.contains("mode sebelumnya dipertahankan")
+                    && bluetoothGamepad != null) {
+                gamepadInputMode = bluetoothGamepad.isGamepadMode();
+                if (touchOverlay != null) {
+                    touchOverlay.setVisibility(gamepadInputMode ? View.GONE : View.VISIBLE);
+                }
+                if (gamepadOverlay != null) {
+                    gamepadOverlay.setVisibility(gamepadInputMode ? View.VISIBLE : View.GONE);
+                }
+                if (overlayToggleButton != null) {
+                    overlayToggleButton.setText(gamepadInputMode
+                            ? "GANTI KE TOUCH HID" : "GANTI KE GAMEPAD");
+                }
+                controlStatus = "Jaringan 2 mempertahankan profil " +
+                        (gamepadInputMode ? "Gamepad." : "Touch HID.");
+                updateStatus();
+            }
         }));
         bluetoothStatus = device == null
                 ? "Jaringan 2 • Mendaftarkan Bluetooth " + (gamepadInputMode ? "Gamepad" : "Touch HID") + "..."
