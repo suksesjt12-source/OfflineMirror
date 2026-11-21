@@ -135,6 +135,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     private int lastQueuedTouchCount;
     private volatile boolean gamepadMode = false;
     private volatile boolean profileSwitchPending = false;
+    private volatile boolean registrationRequested = false;
+    private volatile boolean registeredProfileGamepad = false;
     private byte[] latestGamepadReport = new byte[] {
             0, 0, 8, (byte) 128, (byte) 128, (byte) 128, (byte) 128, 0, 0
     };
@@ -192,6 +194,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         BluetoothHidDevice device = hidDevice;
         if (device == null) { status("Bluetooth HID belum siap"); return; }
         boolean pad = gamepadMode;
+        registeredProfileGamepad = pad;
+        registrationRequested = true;
         byte subclass = pad ? (byte) BluetoothHidDevice.SUBCLASS2_GAMEPAD : (byte) 0x00;
         BluetoothHidDeviceAppSdpSettings sdp = new BluetoothHidDeviceAppSdpSettings(
                 pad ? "OfflineMirror Gamepad" : "OfflineMirror Touch HID",
@@ -200,6 +204,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 "OfflineMirror", subclass,
                 pad ? GAMEPAD_REPORT_DESCRIPTOR : TOUCH_REPORT_DESCRIPTOR);
         boolean ok = device.registerApp(sdp, null, null, context.getMainExecutor(), callback);
+        if (!ok) registrationRequested = false;
         status(ok ? (pad ? "Jaringan 2 • profil Bluetooth Gamepad didaftarkan"
                          : "Jaringan 2 • profil Bluetooth Touch HID didaftarkan")
                   : "Pendaftaran profil Bluetooth gagal");
@@ -223,6 +228,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         public void onServiceDisconnected(int profile) {
             connected = false;
             registered = false;
+            registrationRequested = false;
+            profileSwitchPending = false;
             hidDevice = null;
             resetQueuedState();
             status("Layanan Bluetooth HID terputus");
@@ -236,6 +243,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 BluetoothDevice pluggedDevice, boolean isRegistered) {
             registered = isRegistered;
             if (!isRegistered) {
+                registrationRequested = false;
                 connected = false;
                 resetQueuedState();
                 if (profileSwitchPending) {
@@ -246,8 +254,18 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 }
                 return;
             }
+            registrationRequested = false;
+            if (registeredProfileGamepad != gamepadMode) {
+                profileSwitchPending = true;
+                if (hidDevice == null || !hidDevice.unregisterApp()) {
+                    profileSwitchPending = false;
+                    registered = false;
+                    status("Profil Bluetooth lama belum dapat diganti; tekan ulang tombol mode");
+                }
+                return;
+            }
             if (target == null) {
-                status("Jaringan 2 • pair OfflineMirror " +
+                status("Jaringan 2 • pair OfflineMirror "
                         (gamepadMode ? "Gamepad" : "Touch HID") + " dari HP Host");
             } else {
                 status("Jaringan 2 • menyambungkan " +
@@ -572,6 +590,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         } finally {
             connected = false;
             registered = false;
+            registrationRequested = false;
+            profileSwitchPending = false;
             hidDevice = null;
             target = null;
             resetQueuedState();
