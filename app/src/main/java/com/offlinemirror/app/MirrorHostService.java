@@ -747,6 +747,44 @@ public class MirrorHostService extends Service {
                         output.flush();
                         continue;
                     }
+                    if (type == 8) {
+                        int strokeCount = input.readUnsignedByte();
+                        if (strokeCount < 1 || strokeCount > 5) {
+                            throw new IOException("Direct touch stroke count invalid");
+                        }
+                        float[][][] paths = new float[strokeCount][][];
+                        long[] durations = new long[strokeCount];
+                        boolean valid = true;
+                        for (int stroke = 0; stroke < strokeCount; stroke++) {
+                            durations[stroke] = input.readLong();
+                            int pointCount = input.readUnsignedByte();
+                            if (pointCount < 2 || pointCount > 48) {
+                                throw new IOException("Direct touch point count invalid");
+                            }
+                            paths[stroke] = new float[pointCount][2];
+                            for (int point = 0; point < pointCount; point++) {
+                                float x = input.readFloat();
+                                float y = input.readFloat();
+                                paths[stroke][point][0] = x;
+                                paths[stroke][point][1] = y;
+                                valid &= isUnitCoordinate(x) && isUnitCoordinate(y);
+                            }
+                            valid &= durations[stroke] >= 1L && durations[stroke] <= 10000L;
+                        }
+                        boolean accepted = valid
+                                && RemoteTouchAccessibilityService.dispatchRemoteGesture(paths, durations);
+                        output.writeByte(accepted ? 1 : 0);
+                        output.flush();
+                        continue;
+                    }
+                    if (type == 9) {
+                        int action = input.readUnsignedByte();
+                        boolean accepted =
+                                RemoteTouchAccessibilityService.performRemoteGlobalAction(action);
+                        output.writeByte(accepted ? 1 : 0);
+                        output.flush();
+                        continue;
+                    }
                 }
             } catch (Exception error) {
                 if (running) {

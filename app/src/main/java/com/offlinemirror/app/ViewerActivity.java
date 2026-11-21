@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.graphics.Color;
 import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
@@ -45,6 +46,8 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 
 public class ViewerActivity extends Activity implements TextureView.SurfaceTextureListener {
@@ -66,7 +69,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private Button bluetoothButton;
     private GamepadOverlayView gamepadOverlay;
     private BluetoothHidGamepad bluetoothGamepad;
-    private MouseOverlayView mouseOverlay;
+    private TouchOverlayView touchOverlay;
+    private LinearLayout navigationBar;
     private Button layoutToolButton;
     private boolean layoutEditMode;
     private boolean gamepadWasHiddenBeforeLayout;
@@ -78,8 +82,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private boolean showPerformance = true;
     private float gamepadSensitivity = 1.0f;
     private int gamepadPreset = 0;
-    private int scrollUpSensitivity = 1;
-    private int scrollDownSensitivity = 1;
     private volatile long pingSentAt = 0L;
     private volatile long pingRttMs = -1L;
     private volatile Thread pingThread;
@@ -121,10 +123,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         showPerformance = preferences.getBoolean("performance_overlay", true);
         gamepadSensitivity = preferences.getFloat("gamepad_sensitivity", 1.0f);
         gamepadPreset = preferences.getInt("gamepad_preset", 0);
-        scrollUpSensitivity = Math.max(1, Math.min(10,
-                preferences.getInt("mouse_scroll_up_sensitivity", 1)));
-        scrollDownSensitivity = Math.max(1, Math.min(10,
-                preferences.getInt("mouse_scroll_down_sensitivity", 1)));
         videoPort = getIntent().getIntExtra("videoPort", VIDEO_PORT);
         audioPort = getIntent().getIntExtra("audioPort", AUDIO_PORT);
         controlPort = getIntent().getIntExtra("controlPort", CONTROL_PORT);
@@ -206,13 +204,9 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             }
 
         });
-        mouseOverlay = new MouseOverlayView(this);
-        mouseOverlay.setScrollSensitivity(scrollUpSensitivity, scrollDownSensitivity);
-        mouseOverlay.setListener((dx, dy, buttons, wheel) -> {
-            if (bluetoothGamepad != null) bluetoothGamepad.sendMouse(dx, dy, buttons, wheel);
-        });
-        mouseOverlay.setVisibility(View.GONE);
-        videoFrame.addView(mouseOverlay, new FrameLayout.LayoutParams(
+        touchOverlay = new TouchOverlayView(this);
+        touchOverlay.setListener(this::sendTouchGesture);
+        videoFrame.addView(touchOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -221,7 +215,36 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         root.addView(videoFrame, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Gamepad and mouse input use Bluetooth HID; Wi-Fi carries video, audio and utilities.
+        final boolean[] navigationShown = {
+                preferences.getBoolean("navigation_visible", true)
+        };
+        navigationBar = new LinearLayout(this);
+        navigationBar.setOrientation(LinearLayout.HORIZONTAL);
+        navigationBar.setGravity(Gravity.CENTER);
+        navigationBar.setPadding(dp(4), 0, dp(4), 0);
+        navigationBar.setBackgroundColor(0xB91B2636);
+        navigationBar.setElevation(dp(12));
+        Button backNavigationButton = new Button(this);
+        backNavigationButton.setText("‹  KEMBALI");
+        backNavigationButton.setTextSize(10);
+        backNavigationButton.setContentDescription("Tombol Kembali pada HP Host");
+        navigationBar.addView(backNavigationButton, new LinearLayout.LayoutParams(dp(112), dp(42)));
+        backNavigationButton.setOnClickListener(button -> sendHostAction(9, 2));
+        Button homeNavigationButton = new Button(this);
+        homeNavigationButton.setText("⌂  HOME");
+        homeNavigationButton.setTextSize(10);
+        homeNavigationButton.setContentDescription("Tombol Home pada HP Host");
+        navigationBar.addView(homeNavigationButton, new LinearLayout.LayoutParams(dp(104), dp(42)));
+        homeNavigationButton.setOnClickListener(button -> sendHostAction(9, 1));
+        FrameLayout.LayoutParams navigationParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(46),
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        navigationParams.bottomMargin = dp(8);
+        root.addView(navigationBar, navigationParams);
+        navigationBar.setVisibility(navigationShown[0] ? View.VISIBLE : View.GONE);
+
+        // Virtual gamepad uses Bluetooth HID. Direct Touch and Home/Back use
+        // the authenticated local Wi-Fi control channel.
         FrameLayout.LayoutParams gamepadBarParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(44), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         gamepadBarParams.topMargin = dp(48);
@@ -233,10 +256,10 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         toolsBar.setOrientation(LinearLayout.HORIZONTAL);
         toolsBar.setGravity(Gravity.CENTER);
         toolsBar.setBackgroundColor(0xBB111923);
-        String[] toolNames = {"SETTINGS", "BLUETOOTH", "MOUSE", "SCROLL ↑", "SCROLL ↓",
-                "LAYOUT", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
+        String[] toolNames = {"SETTINGS", "BLUETOOTH", "NAV", "LAYOUT",
+                "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
         Button settingsTool = null;
-        Button mouseTool = null;
+        Button navigationTool = null;
         Button layoutTool = null;
         bluetoothButton = null;
         for (String toolName : toolNames) {
@@ -251,9 +274,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             toolsBar.addView(tool, toolParams);
             if ("SETTINGS".equals(toolName)) settingsTool = tool;
             else if ("BLUETOOTH".equals(toolName)) bluetoothButton = tool;
-            else if ("MOUSE".equals(toolName)) mouseTool = tool;
-            else if ("SCROLL ↑".equals(toolName)) tool.setOnClickListener(v -> sendMouseScroll(1));
-            else if ("SCROLL ↓".equals(toolName)) tool.setOnClickListener(v -> sendMouseScroll(-1));
+            else if ("NAV".equals(toolName)) navigationTool = tool;
             else if ("LAYOUT".equals(toolName)) layoutTool = tool;
             else if ("VOL -".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 1));
             else if ("VOL +".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 2));
@@ -262,15 +283,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         }
         if (settingsTool != null) settingsTool.setOnClickListener(v -> showGamepadSettings());
         if (bluetoothButton != null) bluetoothButton.setOnClickListener(v -> showBluetoothDevicePicker());
-        if (mouseTool != null) {
-            Button mouseToggle = mouseTool;
-            mouseToggle.setOnClickListener(v -> {
-                boolean visible = mouseOverlay.getVisibility() == View.VISIBLE;
-                mouseOverlay.setVisibility(visible ? View.GONE : View.VISIBLE);
-                mouseToggle.setText(visible ? "MOUSE" : "MOUSE: ON");
-                if (visible) mouseOverlay.releaseAllInputs();
-            });
-        }
         layoutToolButton = layoutTool;
         if (layoutToolButton != null) {
             layoutToolButton.setOnClickListener(v -> toggleLayoutEditMode(layoutToolButton));
@@ -295,6 +307,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             overlayToggle.setVisibility(View.GONE);
             gamepadBar.setVisibility(View.GONE);
             toolsScroll.setVisibility(View.GONE);
+            navigationBar.setVisibility(View.GONE);
             controlStatus = "Mode penonton • video saja";
         }
         overlayToggle.setOnClickListener(button -> {
@@ -321,9 +334,22 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             status.setVisibility(visibility);
             gamepadBar.setVisibility(visibility);
             toolsScroll.setVisibility(visibility);
+            navigationBar.setVisibility(hudShown[0] && navigationShown[0]
+                    ? View.VISIBLE : View.GONE);
             hudToggle.setText(hudShown[0] ? "HUD −" : "HUD +");
         };
         applyHudVisibility.run();
+        if (navigationTool != null) {
+            Button navToggle = navigationTool;
+            navToggle.setText(navigationShown[0] ? "NAV −" : "NAV +");
+            navToggle.setOnClickListener(button -> {
+                navigationShown[0] = !navigationShown[0];
+                navigationBar.setVisibility(hudShown[0] && navigationShown[0]
+                        ? View.VISIBLE : View.GONE);
+                navToggle.setText(navigationShown[0] ? "NAV −" : "NAV +");
+                preferences.edit().putBoolean("navigation_visible", navigationShown[0]).apply();
+            });
+        }
         if (!controlEnabled) {
             status.setVisibility(View.GONE);
             gamepadBar.setVisibility(View.GONE);
@@ -542,7 +568,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         panel.setOrientation(LinearLayout.VERTICAL);
 
         TextView mappingInfo = new TextView(this);
-        mappingInfo.setText("Gerakkan pointer dengan satu jari, double-tap untuk klik kiri, dan geser dua jari untuk scroll. Tombol samping hanya untuk scroll atas/bawah.");
+        mappingInfo.setText("Ketuk, tahan, atau geser pada bagian gambar Host yang tidak tertutup kontrol virtual. Sentuhan dikirim lewat Wi-Fi. Aktifkan layanan OfflineMirror Remote Touch pada HP Host terlebih dahulu.");
         mappingInfo.setTextSize(12);
         panel.addView(mappingInfo);
 
@@ -565,43 +591,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 Math.round((gamepadSensitivity - 0.5f) * 100f))));
         panel.addView(sensitivity);
 
-        TextView scrollTitle = new TextView(this);
-        scrollTitle.setText("Sensitivitas scroll mouse");
-        scrollTitle.setTextColor(Color.rgb(80, 145, 220));
-        scrollTitle.setTypeface(null, 1);
-        scrollTitle.setPadding(0, dp(12), 0, dp(4));
-        panel.addView(scrollTitle);
-
-        TextView scrollUpLabel = new TextView(this);
-        scrollUpLabel.setText("Scroll atas: " + scrollUpSensitivity + "x");
-        panel.addView(scrollUpLabel);
-        SeekBar scrollUp = new SeekBar(this);
-        scrollUp.setMax(9);
-        scrollUp.setProgress(scrollUpSensitivity - 1);
-        scrollUp.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
-                scrollUpLabel.setText("Scroll atas: " + (value + 1) + "x");
-            }
-            @Override public void onStartTrackingTouch(SeekBar bar) {}
-            @Override public void onStopTrackingTouch(SeekBar bar) {}
-        });
-        panel.addView(scrollUp);
-
-        TextView scrollDownLabel = new TextView(this);
-        scrollDownLabel.setText("Scroll bawah: " + scrollDownSensitivity + "x");
-        panel.addView(scrollDownLabel);
-        SeekBar scrollDown = new SeekBar(this);
-        scrollDown.setMax(9);
-        scrollDown.setProgress(scrollDownSensitivity - 1);
-        scrollDown.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
-                scrollDownLabel.setText("Scroll bawah: " + (value + 1) + "x");
-            }
-            @Override public void onStartTrackingTouch(SeekBar bar) {}
-            @Override public void onStopTrackingTouch(SeekBar bar) {}
-        });
-        panel.addView(scrollDown);
-
         CheckBox lowLatency = new CheckBox(this);
         lowLatency.setText("Ultra Low Latency (decoder & buffer kecil)");
         lowLatency.setChecked(lowLatencyMode);
@@ -621,21 +610,16 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 .setPositiveButton("Simpan", (dialog, which) -> {
                     gamepadPreset = preset.getSelectedItemPosition();
                     gamepadSensitivity = 0.5f + sensitivity.getProgress() / 100f;
-                    scrollUpSensitivity = scrollUp.getProgress() + 1;
-                    scrollDownSensitivity = scrollDown.getProgress() + 1;
                     lowLatencyMode = lowLatency.isChecked();
                     showPerformance = performance.isChecked();
                     getSharedPreferences("offline_mirror_settings", MODE_PRIVATE).edit()
                             .putInt("gamepad_preset", gamepadPreset)
                             .putFloat("gamepad_sensitivity", gamepadSensitivity)
-                            .putInt("mouse_scroll_up_sensitivity", scrollUpSensitivity)
-                            .putInt("mouse_scroll_down_sensitivity", scrollDownSensitivity)
                             .putBoolean("low_latency", lowLatencyMode)
                             .putBoolean("performance_overlay", showPerformance)
                             .apply();
                     gamepadOverlay.setLayoutPreset(gamepadPreset);
                     gamepadOverlay.setSensitivity(gamepadSensitivity);
-                    mouseOverlay.setScrollSensitivity(scrollUpSensitivity, scrollDownSensitivity);
                     Toast.makeText(this, "Pengaturan disimpan", Toast.LENGTH_SHORT).show();
                 }).show();
     }
@@ -749,6 +733,9 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 setRequestedOrientation(targetOrientation);
             }
             updateVideoSurfaceLayout();
+            if (touchOverlay != null) {
+                touchOverlay.setSourceAspectRatio(config.width, config.height);
+            }
         });
     }
 
@@ -945,13 +932,25 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         return rendered;
     }
 
-    private void sendMouseScroll(int direction) {
-        if (bluetoothGamepad == null) {
-            Toast.makeText(this, "Hubungkan Bluetooth HID terlebih dahulu.", Toast.LENGTH_SHORT).show();
-            return;
+    private void sendTouchGesture(TouchOverlayView.TouchStroke[] strokes) {
+        if (!controlEnabled || strokes == null || strokes.length == 0) return;
+        DataOutputStream output = controlOutput;
+        if (output == null) return;
+        try {
+            synchronized (output) {
+                output.writeByte(8);
+                output.writeByte(strokes.length);
+                for (TouchOverlayView.TouchStroke stroke : strokes) {
+                    int pointCount = stroke.coordinates.length / 2;
+                    output.writeLong(stroke.durationMs);
+                    output.writeByte(pointCount);
+                    for (float coordinate : stroke.coordinates) output.writeFloat(coordinate);
+                }
+                output.flush();
+            }
+        } catch (Exception error) {
+            android.util.Log.w("OfflineMirror", "Could not send direct touch gesture", error);
         }
-        int amount = direction > 0 ? scrollUpSensitivity : scrollDownSensitivity;
-        bluetoothGamepad.sendMouse(0, 0, 0, direction * amount);
     }
 
     private void toggleLayoutEditMode(Button button) {
@@ -1163,7 +1162,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             enableImmersiveViewer();
         } else {
             if (gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
-            if (mouseOverlay != null) mouseOverlay.releaseAllInputs();
+            if (touchOverlay != null) touchOverlay.cancelTouches();
             if (layoutEditMode) {
                 layoutEditMode = false;
                 if (layoutToolButton != null) layoutToolButton.setText("LAYOUT");
@@ -1181,7 +1180,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         Thread pinger = pingThread;
         if (pinger != null) pinger.interrupt();
         if (gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
-        if (mouseOverlay != null) mouseOverlay.releaseAllInputs();
+        if (touchOverlay != null) touchOverlay.cancelTouches();
         if (bluetoothGamepad != null) bluetoothGamepad.stop();
         if (gamepadOverlay != null) gamepadOverlay.setLayoutEditMode(false);
         stopReceiving();
@@ -1201,6 +1200,188 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             this.height = height;
             this.csd0 = csd0;
             this.csd1 = csd1;
+        }
+    }
+}
+
+
+/**
+ * Transparent gesture recorder. It forwards touch paths only on the Host image
+ * area, excluding letterbox margins. The class is package-private so it can
+ * share ViewerActivity's source file and protocol types.
+ */
+final class TouchOverlayView extends View {
+    interface Listener {
+        void onTouchGesture(TouchStroke[] strokes);
+    }
+
+    static final class TouchStroke {
+        final long durationMs;
+        final float[] coordinates;
+        TouchStroke(long durationMs, float[] coordinates) {
+            this.durationMs = durationMs;
+            this.coordinates = coordinates;
+        }
+    }
+
+    private static final int MAX_POINTERS = 5;
+    private static final int MAX_POINTS = 48;
+    private final Map<Integer, TouchPath> active = new LinkedHashMap<>();
+    private final RectF content = new RectF();
+    private Listener listener;
+    private float aspectRatio;
+
+    TouchOverlayView(android.content.Context context) {
+        super(context);
+        setBackgroundColor(Color.TRANSPARENT);
+        setWillNotDraw(true);
+        setClickable(true);
+        setContentDescription("Direct Touch Host");
+    }
+
+    void setListener(Listener value) { listener = value; }
+
+    void setSourceAspectRatio(int width, int height) {
+        if (width > 0 && height > 0) {
+            aspectRatio = (float) width / (float) height;
+            updateContent();
+        }
+    }
+
+    private void updateContent() {
+        if (getWidth() <= 0 || getHeight() <= 0) return;
+        if (aspectRatio <= 0f) {
+            content.set(0f, 0f, getWidth(), getHeight());
+        } else if ((float) getWidth() / getHeight() > aspectRatio) {
+            float w = getHeight() * aspectRatio;
+            float left = (getWidth() - w) * 0.5f;
+            content.set(left, 0f, left + w, getHeight());
+        } else {
+            float h = getWidth() / aspectRatio;
+            float top = (getHeight() - h) * 0.5f;
+            content.set(0f, top, getWidth(), top + h);
+        }
+    }
+
+    private float clamp(float value) { return Math.max(0f, Math.min(1f, value)); }
+
+    private boolean addPointer(MotionEvent event, int index) {
+        int id = event.getPointerId(index);
+        float x = event.getX(index), y = event.getY(index);
+        if (active.size() >= MAX_POINTERS || !content.contains(x, y)) return false;
+        TouchPath path = new TouchPath(event.getEventTime());
+        path.add(clamp((x - content.left) / content.width()),
+                clamp((y - content.top) / content.height()));
+        active.put(id, path);
+        return true;
+    }
+
+    private void updatePointers(MotionEvent event) {
+        for (Map.Entry<Integer, TouchPath> entry : active.entrySet()) {
+            TouchPath path = entry.getValue();
+            if (path.finished) continue;
+            int index = event.findPointerIndex(entry.getKey());
+            if (index < 0) continue;
+            float x = event.getX(index), y = event.getY(index);
+            if (content.contains(x, y)) {
+                path.add(clamp((x - content.left) / content.width()),
+                        clamp((y - content.top) / content.height()));
+            }
+        }
+    }
+
+    private void finish(int id, long eventTime) {
+        TouchPath path = active.get(id);
+        if (path != null) {
+            path.finished = true;
+            path.duration = Math.max(40L, Math.min(10000L, eventTime - path.started));
+            if (path.values.size() == 2) {
+                path.values.add(path.lastX);
+                path.values.add(path.lastY);
+            }
+        }
+    }
+
+    private void dispatchWhenComplete() {
+        for (TouchPath path : active.values()) if (!path.finished) return;
+        if (active.isEmpty()) return;
+        TouchStroke[] strokes = new TouchStroke[active.size()];
+        int position = 0;
+        for (TouchPath path : active.values()) strokes[position++] =
+                new TouchStroke(path.duration, path.toArray());
+        active.clear();
+        if (listener != null) listener.onTouchGesture(strokes);
+        performClick();
+    }
+
+    void cancelTouches() { active.clear(); }
+
+    @Override protected void onSizeChanged(int w, int h, int oldW, int oldH) {
+        super.onSizeChanged(w, h, oldW, oldH);
+        updateContent();
+        cancelTouches();
+    }
+
+    @Override public boolean onTouchEvent(MotionEvent event) {
+        int action = event.getActionMasked();
+        int index = event.getActionIndex();
+        if (action == MotionEvent.ACTION_DOWN) {
+            active.clear();
+            return addPointer(event, index);
+        }
+        if (action == MotionEvent.ACTION_POINTER_DOWN) {
+            addPointer(event, index);
+            return !active.isEmpty();
+        }
+        if (action == MotionEvent.ACTION_MOVE) {
+            updatePointers(event);
+            return !active.isEmpty();
+        }
+        if (action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP) {
+            finish(event.getPointerId(index), event.getEventTime());
+            dispatchWhenComplete();
+            return true;
+        }
+        if (action == MotionEvent.ACTION_CANCEL) {
+            cancelTouches();
+            return true;
+        }
+        return !active.isEmpty();
+    }
+
+    @Override public boolean performClick() {
+        super.performClick();
+        return true;
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        cancelTouches();
+        super.onDetachedFromWindow();
+    }
+
+    private static final class TouchPath {
+        final long started;
+        final ArrayList<Float> values = new ArrayList<>();
+        long duration = 80L;
+        boolean finished;
+        float lastX, lastY;
+        TouchPath(long started) { this.started = started; }
+        void add(float x, float y) {
+            if (!values.isEmpty() && Math.hypot(x - lastX, y - lastY) < 0.0025f) return;
+            if (values.size() >= MAX_POINTS * 2) {
+                values.set(values.size() - 2, x);
+                values.set(values.size() - 1, y);
+            } else {
+                values.add(x);
+                values.add(y);
+            }
+            lastX = x;
+            lastY = y;
+        }
+        float[] toArray() {
+            float[] result = new float[values.size()];
+            for (int i = 0; i < values.size(); i++) result[i] = values.get(i);
+            return result;
         }
     }
 }

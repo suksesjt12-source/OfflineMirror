@@ -77,7 +77,7 @@ public final class GamepadOverlayView extends View {
         if(id==BUTTON_L3)return new float[]{baseLeftX(),stickY()-dp(62)};
         if(id==BUTTON_R3)return new float[]{baseRightX(),stickY()-dp(62)};
         if(isDpad(id)){
-            float x=baseDpadX(),y=baseDpadY(),o=dpadRadius()*2.05f;
+            float x=baseDpadX(),y=baseDpadY(),o=dpadRadius()*2.35f;
             if(id==BUTTON_DPAD_LEFT)x-=o;
             if(id==BUTTON_DPAD_RIGHT)x+=o;
             if(id==BUTTON_DPAD_UP)y-=o;
@@ -208,10 +208,30 @@ public final class GamepadOverlayView extends View {
         text(c,name,p[0],p[1]+dp(3),dp(8));
     }
 
+    private int hitDpad(float x,float y) {
+        int[] directions = {
+                BUTTON_DPAD_UP, BUTTON_DPAD_DOWN,
+                BUTTON_DPAD_LEFT, BUTTON_DPAD_RIGHT
+        };
+        float limit = dpadRadius() * 0.62f;
+        float bestDistance = limit * limit;
+        int best = 0;
+        for (int bit : directions) {
+            float deltaX = x - dx(bit);
+            float deltaY = y - dy(bit);
+            float distance = deltaX * deltaX + deltaY * deltaY;
+            if (distance <= bestDistance) {
+                bestDistance = distance;
+                best = bit;
+            }
+        }
+        return best;
+    }
+
     private int hitButton(float x,float y){
-        int[] dirs={BUTTON_DPAD_UP,BUTTON_DPAD_DOWN,BUTTON_DPAD_LEFT,BUTTON_DPAD_RIGHT};
-        float dr=dpadRadius()*0.86f;
-        for(int bit:dirs){float a=x-dx(bit),b=y-dy(bit);if(a*a+b*b<=dr*dr)return bit;}
+        // One touch resolves to the nearest single direction, never two.
+        int dpad = hitDpad(x, y);
+        if (dpad != 0) return dpad;
         int[] acts={BUTTON_A,BUTTON_B,BUTTON_X,BUTTON_Y};
         float ar=actionRadius()*0.88f;
         for(int bit:acts){float a=x-bx(bit),b=y-by(bit);if(a*a+b*b<=ar*ar)return bit;}
