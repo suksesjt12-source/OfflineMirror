@@ -1,4 +1,4 @@
-# OfflineMirror 1.42.0
+# OfflineMirror 1.43.0
 
 OfflineMirror mirrors an Android display to another Android phone over the same private Wi-Fi or hotspot. Internet access is not required.
 
@@ -10,15 +10,15 @@ OfflineMirror mirrors an Android display to another Android phone over the same 
 4. On the Host, tap **SHOW PAIRING QR**.
 5. On the Viewer, scan the QR and connect to the Host.
 6. Enable Bluetooth on both phones. In Viewer, tap **PAIR BT**.
-7. Pair the device named **OfflineMirror Touchscreen** from the Host Bluetooth settings. Keep Viewer open while using the connection.
+7. Pair the device named **OfflineMirror Controller** from the Host Bluetooth settings. Keep Viewer open while using the connection.
 
-## Bluetooth HID touchscreen and gamepad
+## Composite Bluetooth HID: Touchscreen, Gamepad and Home/Back
 
-- Bluetooth HID advertises the standard gamepad collection and an experimental HID Digitizer / Touch Screen collection.
+- One Bluetooth HID device advertises the standard Game Pad collection plus the experimental HID Digitizer / Touch Screen collection. Home and Back are Consumer usages AC Home and AC Back inside the same Game Pad collection; no second Bluetooth device or Accessibility service is used.
 - The touchscreen report uses absolute X/Y coordinates and one contact identifier. Tap and drag with one finger on the mirrored video area.
-- Touch reports and gamepad reports are sent directly over Bluetooth HID. The former Wi-Fi Direct Touch packet and Android Accessibility gesture service have been removed.
+- Touch reports, gamepad reports, and HOME/BACK key reports are sent over the same Bluetooth HID connection. Wi-Fi carries only the emulator-mode notification and utility features; HOME/BACK are not sent over Wi-Fi.
 - HID Touch Screen support is not consistent across Android versions and vendor firmware. Some Host devices may pair but ignore the touchscreen collection, or may reject the HID device. This mode is experimental and has not been verified on every Android model.
-- No root, Accessibility service, mouse pointer, or cursor emulation is used for this input path.
+- No root, Accessibility service, overlay permission, mouse pointer, or cursor emulation is used for this input path.
 - The gamepad supports standard Android button, hat-switch, stick and trigger usages, including L3/R3 and analog triggers.
 - LAYOUT moves each gamepad button, D-pad direction and analog stick independently. Each position is saved locally.
 - D-pad hit targets are spaced apart so adjacent directions cannot steal each other's touch.
@@ -37,23 +37,22 @@ Use LAYOUT to enter edit mode, then drag each gamepad button, D-pad direction, o
 
 - Video: TCP port 48888 (H.264)
 - Audio: TCP port 48889 (optional; Android 10+ and capture-compatible apps)
-- Utility commands: TCP port 48890 (authenticated clipboard, volume, media and ping only)
-- Wi-Fi does not carry touch injection or gamepad input. Touchscreen and gamepad reports use Bluetooth HID.
+- Utility commands: TCP port 48890 (authenticated clipboard, volume, media, emulator-mode notifications and ping)
+- Wi-Fi carries video/audio and utility signals. Touchscreen, Gamepad, HOME and BACK input reports all use the same Bluetooth HID connection.
 
 ## Compatibility notes
 
 - Screen mirroring: Android 5.0+
 - Bluetooth HID Device mode: Android 9+ and vendor HID Device support on the Viewer
 - Experimental HID Touch Screen input: Android Host support depends on the Bluetooth HID Host implementation and vendor firmware; not guaranteed
+- HOME/BACK Consumer usages: Android Host should map AC Home (0x0C/0x0223) to KEYCODE_HOME and AC Back (0x0C/0x0224) to KEYCODE_BACK; vendor compatibility can vary
 - Audio playback capture: Android 10+ and capture-compatible apps
 
+## Automatic input-mode switching and navigation
 
-## Automatic emulator mode, navigation and floating controls
-
-- Enable **Auto Detect: emulator aktif → otomatis Gamepad** on the Host and grant OfflineMirror **Usage Access** in Android Settings. The Host checks foreground app events locally and tells the Viewer to show the gamepad overlay for recognized emulator packages.
+- Enable **Auto Detect: emulator aktif → otomatis Gamepad** on the Host and grant OfflineMirror **Usage Access** in Android Settings. The Host checks foreground app events locally and sends the input-mode state to the Viewer.
 - Recognized package-name markers include PPSSPP, Dolphin, RetroArch, AetherSX2/NetherSX2, Citra/Lime3DS, Yuzu/Sudachi, Winlator, DuckStation, Lemuroid, DraStic and GameHub. Some vendor builds use different package names, so detection is not guaranteed for every emulator.
 - The detector reads foreground package identifiers only. It does not collect screen contents or send usage data to an internet service. Detection requires Android Usage Access and can vary by firmware.
-- Enable **OfflineMirror Home dan Kembali** in Android Accessibility Settings on the Host. The Viewer toolbar's **BACK** and **HOME** buttons send global navigation requests over the authenticated local control channel.
-- **FLOAT** on the Viewer opens a draggable overlay panel with BACK and HOME buttons. Android 6.0+ requires the Viewer to be allowed to display over other apps. The panel runs as a visible foreground service and can be closed with × or by closing the Viewer session.
-- Home/Back remains unavailable until the Host Accessibility service is explicitly enabled by the user. Floating controls relay actions through the active Viewer session, so the Viewer session must remain alive.
-- Automatic switching changes which input overlay is visible; it does not change Bluetooth pairing or inject touch events.
+- The Viewer toolbar **BACK** and **HOME** buttons send standard AC Back / AC Home Consumer usages in the composite Bluetooth HID Game Pad report. Android maps these usages to KEYCODE_BACK and KEYCODE_HOME on compatible HID hosts.
+- When an emulator is detected, the app releases active touch input, sends a neutral touchscreen report, disables Touch HID input and enables Gamepad reports. When a regular app is active, it releases Gamepad state, disables Gamepad reports and re-enables Touch HID. The same Bluetooth HID pairing remains connected in both modes.
+- The Viewer bottom button can manually switch between Touch HID and Gamepad when needed.

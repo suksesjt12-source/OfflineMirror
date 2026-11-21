@@ -7,7 +7,6 @@ import android.bluetooth.BluetoothDevice;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
-import android.net.Uri;
 import android.content.pm.ActivityInfo;
 import android.graphics.Color;
 import android.graphics.Matrix;
@@ -72,7 +71,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private TouchOverlayView touchOverlay;
     private Button layoutToolButton;
     private Button overlayToggleButton;
-    private static final int REQUEST_FLOATING_OVERLAY = 7722;
+    private boolean gamepadInputMode = false;
     private boolean layoutEditMode;
     private boolean gamepadWasHiddenBeforeLayout;
     private volatile long receiveGeneration;
@@ -229,7 +228,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         toolsBar.setGravity(Gravity.CENTER);
         toolsBar.setBackgroundColor(0xBB111923);
         String[] toolNames = {"SETTINGS", "BLUETOOTH", "LAYOUT",
-                "BACK", "HOME", "FLOAT", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
+                "BACK", "HOME", "VOL -", "VOL +", "MEDIA", "CLIPBOARD"};
         Button settingsTool = null;
         Button layoutTool = null;
         bluetoothButton = null;
@@ -246,9 +245,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             if ("SETTINGS".equals(toolName)) settingsTool = tool;
             else if ("BLUETOOTH".equals(toolName)) bluetoothButton = tool;
             else if ("LAYOUT".equals(toolName)) layoutTool = tool;
-            else if ("BACK".equals(toolName)) tool.setOnClickListener(v -> sendHostNavigation(2));
-            else if ("HOME".equals(toolName)) tool.setOnClickListener(v -> sendHostNavigation(1));
-            else if ("FLOAT".equals(toolName)) tool.setOnClickListener(v -> toggleFloatingControls());
+            else if ("BACK".equals(toolName)) tool.setOnClickListener(v -> sendBluetoothNavigation(2));
+            else if ("HOME".equals(toolName)) tool.setOnClickListener(v -> sendBluetoothNavigation(1));
             else if ("VOL -".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 1));
             else if ("VOL +".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 2));
             else if ("MEDIA".equals(toolName)) tool.setOnClickListener(v -> sendHostAction(6, 3));
@@ -268,7 +266,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
         Button overlayToggle = new Button(this);
         overlayToggleButton = overlayToggle;
-        overlayToggle.setText("SEMBUNYIKAN GAMEPAD");
+        overlayToggle.setText("GANTI KE GAMEPAD");
         overlayToggle.setTextSize(10);
         FrameLayout.LayoutParams toggleParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(42), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
@@ -278,17 +276,17 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         gamepadButton.setOnClickListener(button -> showBluetoothDevicePicker());
         if (!controlEnabled) {
             gamepadOverlay.setVisibility(View.GONE);
+            touchOverlay.setVisibility(View.GONE);
             overlayToggle.setVisibility(View.GONE);
             gamepadBar.setVisibility(View.GONE);
             toolsScroll.setVisibility(View.GONE);
             controlStatus = "Mode penonton • video saja";
+        } else {
+            gamepadOverlay.setVisibility(View.GONE);
+            touchOverlay.setVisibility(View.VISIBLE);
         }
-        overlayToggle.setOnClickListener(button -> {
-            boolean visible = gamepadOverlay.getVisibility() == View.VISIBLE;
-            gamepadOverlay.releaseAllInputs();
-            gamepadOverlay.setVisibility(visible ? View.GONE : View.VISIBLE);
-            overlayToggle.setText(visible ? "TAMPILKAN GAMEPAD" : "SEMBUNYIKAN GAMEPAD");
-        });
+        overlayToggle.setOnClickListener(button ->
+                setInputMode(!gamepadInputMode, "Manual"));
 
         Button hudToggle = new Button(this);
         hudToggle.setTextSize(10);
@@ -323,7 +321,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         });
 
         setContentView(root);
-        FloatingControlService.setNavigationListener(this::sendHostNavigation);
+        setInputMode(false, "Touch HID");
 
         videoStatus = "Menghubungkan ke Host " + host + "...";
         updateStatus();
@@ -497,22 +495,35 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         }
     }
 
-    private void sendHostNavigation(int action) {
-        if (!controlEnabled || controlOutput == null) {
-            Toast.makeText(this, "Koneksi kontrol ke Host belum siap", Toast.LENGTH_SHORT).show();
-            return;
+    private void sendBluetoothNavigation(int action) {
+        if (!controlEnabled || bluetoothGamepad == null
+                || !bluetoothGamepad.sendNavigation(action)) {
+            Toast.makeText(this, "Bluetooth HID belum tersambung", Toast.LENGTH_SHORT).show();
         }
-        DataOutputStream output = controlOutput;
-        try {
-            synchronized (output) {
-                output.writeByte(8);
-                output.writeByte(action);
-                output.flush();
-            }
-        } catch (Exception error) {
-            Toast.makeText(this, "Perintah navigasi gagal dikirim", Toast.LENGTH_SHORT).show();
-            android.util.Log.w("OfflineMirror", "Could not send Host navigation", error);
+    }
+
+    private void setInputMode(boolean useGamepad, String source) {
+        if (!controlEnabled) return;
+        if (gamepadInputMode == useGamepad && overlayToggleButton != null) return;
+
+        if (gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
+        if (useGamepad && touchOverlay != null) touchOverlay.cancelTouches();
+
+        gamepadInputMode = useGamepad;
+        if (bluetoothGamepad != null) bluetoothGamepad.setInputMode(useGamepad);
+        if (touchOverlay != null) {
+            touchOverlay.setVisibility(useGamepad ? View.GONE : View.VISIBLE);
         }
+        if (gamepadOverlay != null) {
+            gamepadOverlay.setVisibility(useGamepad ? View.VISIBLE : View.GONE);
+        }
+        if (overlayToggleButton != null) {
+            overlayToggleButton.setText(useGamepad ? "GANTI KE TOUCH HID" : "GANTI KE GAMEPAD");
+        }
+        controlStatus = source + ": " + (useGamepad
+                ? "Gamepad aktif • Touch HID nonaktif"
+                : "Touch HID aktif • Gamepad nonaktif");
+        updateStatus();
     }
 
     private void applyAutoDetectedInputMode(boolean emulator, String packageName) {
@@ -521,61 +532,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             updateStatus();
             return;
         }
-        if (emulator) {
-            if (touchOverlay != null) {
-                touchOverlay.cancelTouches();
-                touchOverlay.setVisibility(View.GONE);
-            }
-            if (gamepadOverlay != null) gamepadOverlay.setVisibility(View.VISIBLE);
-            if (overlayToggleButton != null) overlayToggleButton.setText("SEMBUNYIKAN GAMEPAD");
-            controlStatus = "Auto Detect: Gamepad • " + packageName;
-        } else {
-            if (gamepadOverlay != null) {
-                gamepadOverlay.releaseAllInputs();
-                gamepadOverlay.setVisibility(View.GONE);
-            }
-            if (touchOverlay != null) touchOverlay.setVisibility(View.VISIBLE);
-            if (overlayToggleButton != null) overlayToggleButton.setText("TAMPILKAN GAMEPAD");
-            controlStatus = "Auto Detect: Touch • " + packageName;
-        }
-        updateStatus();
-    }
-
-    private void toggleFloatingControls() {
-        if (FloatingControlService.isRunning()) {
-            stopService(new Intent(this, FloatingControlService.class));
-            Toast.makeText(this, "Floating window dimatikan", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if (Build.VERSION.SDK_INT < 23) {
-            Toast.makeText(this, "Floating window memerlukan Android 6.0 atau lebih baru", Toast.LENGTH_LONG).show();
-            return;
-        }
-        if (!Settings.canDrawOverlays(this)) {
-            startActivityForResult(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName())), REQUEST_FLOATING_OVERLAY);
-            return;
-        }
-        startFloatingControlService();
-    }
-
-    private void startFloatingControlService() {
-        Intent service = new Intent(this, FloatingControlService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(service);
-        else startService(service);
-        Toast.makeText(this, "Floating controls aktif", Toast.LENGTH_SHORT).show();
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_FLOATING_OVERLAY) {
-            if (Build.VERSION.SDK_INT >= 23 && Settings.canDrawOverlays(this)) {
-                startFloatingControlService();
-            } else {
-                Toast.makeText(this, "Izin floating window belum diberikan", Toast.LENGTH_LONG).show();
-            }
-        }
+        setInputMode(emulator, "Auto Detect • " + packageName);
     }
 
     private void sendClipboardToHost() {
@@ -750,6 +707,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 : "Menyambungkan ke " + device.getAddress();
         if (gamepadStatus != null) gamepadStatus.setText(bluetoothStatus);
         if (bluetoothButton != null) bluetoothButton.setText("BT: CONNECTING");
+        bluetoothGamepad.setInputMode(gamepadInputMode);
         bluetoothGamepad.start(device);
     }
 
@@ -1209,8 +1167,6 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     @Override
     protected void onDestroy() {
         controlLoopRunning = false;
-        FloatingControlService.setNavigationListener(null);
-        stopService(new Intent(this, FloatingControlService.class));
         Thread pinger = pingThread;
         if (pinger != null) pinger.interrupt();
         if (gamepadOverlay != null) gamepadOverlay.releaseAllInputs();

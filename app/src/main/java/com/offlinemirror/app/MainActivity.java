@@ -177,17 +177,6 @@ public class MainActivity extends Activity {
             }
         });
 
-        Button accessibilityButton = makeButton("IZINKAN TOMBOL HOME / KEMBALI", Color.rgb(43, 83, 132));
-        LinearLayout.LayoutParams accessibilityParams = matchWrap();
-        accessibilityParams.topMargin = dp(4);
-        page.addView(accessibilityButton, accessibilityParams);
-        accessibilityButton.setOnClickListener(v -> {
-            try { startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); }
-            catch (Exception error) {
-                Toast.makeText(this, "Pengaturan Accessibility tidak tersedia", Toast.LENGTH_LONG).show();
-            }
-        });
-
         Button startButton = makeButton("START SCREEN SHARING", Color.rgb(43, 116, 235));
         LinearLayout.LayoutParams startParams = matchWrap();
         startParams.topMargin = dp(12);
@@ -308,7 +297,7 @@ public class MainActivity extends Activity {
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Input sentuhan pada Viewer dikirim sebagai Bluetooth HID Touchscreen eksperimental bersama gamepad; pairing harus dilakukan dari Viewer dan HP Host. Touchscreen HID tidak didukung seragam oleh Android, sehingga bisa saja tidak berfungsi pada beberapa model/firmware. Viewer menyediakan tap, drag satu jari, dua stick analog, D-pad, tombol bahu, dan tombol aksi. Gunakan LAYOUT untuk mengatur posisi gamepad. Auto Detect memerlukan Usage Access pada Host. Home/Kembali memerlukan layanan Accessibility OfflineMirror pada Host. Floating Window memerlukan izin tampil di atas aplikasi pada Viewer. Wi-Fi membawa video, audio opsional, perintah navigasi, clipboard, volume, dan media. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
+        note.setText("QR berisi IP, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung maksimal 4 Viewer video. Touchscreen satu jari, Gamepad, serta tombol HOME dan BACK berada dalam satu koneksi Bluetooth HID. Auto Detect memerlukan Usage Access pada Host. Saat emulator terdeteksi, Touch HID dinonaktifkan dan hanya Gamepad yang aktif; saat aplikasi biasa aktif, Gamepad dinonaktifkan dan Touch HID aktif. Viewer menyediakan tombol HOME/BACK melalui Bluetooth HID, dua stick analog, D-pad, tombol bahu, dan tombol aksi. Gunakan LAYOUT untuk mengatur posisi gamepad. Wi-Fi membawa video, audio opsional, serta perintah utilitas clipboard/volume/media. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);

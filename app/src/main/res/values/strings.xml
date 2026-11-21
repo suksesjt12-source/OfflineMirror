@@ -3,5 +3,4 @@
     <string name="app_name">OfflineMirror</string>
 
     <string name="remote_control_service_description">Allows a paired OfflineMirror Viewer on your local network to send taps, long presses and swipes to this phone while Host sharing is active. It does not read screen content. Enable only on the Host phone when needed.</string>
-    <string name="remote_navigation_service_description">Allows a paired OfflineMirror Viewer to request Android Home and Back actions on this Host phone. It does not read screen content or perform gestures.</string>
 </resources>

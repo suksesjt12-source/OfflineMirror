@@ -52,6 +52,14 @@ public final class BluetoothHidGamepad {
         0x05, 0x02, 0x09, (byte) 0xC5, 0x09, (byte) 0xC4,
         0x15, 0x00, 0x26, (byte) 0xFF, 0x00, 0x75, 0x08,
         (byte) 0x95, 0x02, (byte) 0x81, 0x02,
+
+        // Android Consumer Control usages inside the Game Pad collection.
+        0x05, 0x0C,
+        0x0A, 0x23, 0x02, // AC Home -> KEYCODE_HOME
+        0x0A, 0x24, 0x02, // AC Back -> KEYCODE_BACK
+        0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
+        (byte) 0x95, 0x02, (byte) 0x81, 0x02,
+        0x75, 0x06, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
         (byte) 0xC0,
 
         // Experimental HID Digitizer Touch Screen: one absolute contact.
@@ -91,6 +99,12 @@ public final class BluetoothHidGamepad {
     private byte[] pendingTouchReport;
     private int lastQueuedButtons = -1;
     private boolean lastQueuedTouchPressed;
+    private volatile boolean gamepadMode = false;
+    private byte[] latestGamepadReport = new byte[] {
+            0, 0, 8, (byte) 128, (byte) 128, (byte) 128, (byte) 128, 0, 0, 0
+    };
+    private int navigationButtons;
+    private int navigationGeneration;
 
     private final Runnable sendLatestGamepadReport =
             () -> sendPendingGamepadReport();
@@ -121,7 +135,7 @@ public final class BluetoothHidGamepad {
             if (!requested) {
                 status("Bluetooth HID Device tidak didukung firmware HP ini");
             } else {
-                status("Mendaftarkan Bluetooth HID Touchscreen eksperimental + gamepad...");
+                status("Mendaftarkan Bluetooth HID Touch + Gamepad + Home/Back...");
             }
         } catch (SecurityException denied) {
             status("Izin Bluetooth tidak diberikan");
@@ -155,8 +169,8 @@ public final class BluetoothHidGamepad {
             byte gamepadSubclass = (byte) BluetoothHidDevice.SUBCLASS2_GAMEPAD;
             BluetoothHidDeviceAppSdpSettings sdp =
                     new BluetoothHidDeviceAppSdpSettings(
-                            "OfflineMirror Touchscreen",
-                            "Experimental HID Touchscreen and Gamepad",
+                            "OfflineMirror Controller",
+                            "Bluetooth HID Touchscreen, Gamepad and Navigation",
                             "OfflineMirror",
                             gamepadSubclass,
                             REPORT_DESCRIPTOR);
@@ -166,8 +180,8 @@ public final class BluetoothHidGamepad {
                     sdp, null, null, executor, callback);
             status(accepted
                     ? (target == null
-                        ? "HID gamepad siap dipair dari Bluetooth Host..."
-                        : "Mendaftarkan gamepad Bluetooth...")
+                        ? "HID Controller siap dipair dari Bluetooth Host..."
+                        : "Mendaftarkan Bluetooth Controller...")
                     : "Pendaftaran Bluetooth HID ditolak sistem");
         }
 
@@ -214,8 +228,8 @@ public final class BluetoothHidGamepad {
             if (connected) {
                 target = device;
                 resetQueuedState();
-                status("Bluetooth terhubung • touch HID eksperimental + gamepad aktif");
-                sendState(0, 0f, 0f, 0f, 0f);
+                status("Bluetooth terhubung • Touch HID + Gamepad + Home/Back siap");
+                sendNeutralReports();
             } else if (state == BluetoothProfile.STATE_CONNECTING) {
                 status("Bluetooth HID sedang menyambungkan...");
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
@@ -230,7 +244,7 @@ public final class BluetoothHidGamepad {
             if (hidDevice != null && type == BluetoothHidDevice.REPORT_TYPE_INPUT) {
                 try {
                     if (id == GAMEPAD_REPORT_ID) {
-                        hidDevice.replyReport(device, type, id, neutralReport(id));
+                        hidDevice.replyReport(device, type, id, neutralReport());
                     } else if (id == TOUCH_REPORT_ID) {
                         hidDevice.replyReport(device, type, id, neutralTouchReport());
                     }
@@ -244,12 +258,12 @@ public final class BluetoothHidGamepad {
     /** Android-standard button, hat, dual-stick and analog trigger report. */
     public void sendState(
             int buttons, float leftX, float leftY, float rightX, float rightY) {
-        if (!connected || reportHandler == null) return;
-
-        byte[] report = buildGamepadReport(
-                buttons, leftX, leftY, rightX, rightY);
+        if (!connected || reportHandler == null || !gamepadMode) return;
 
         synchronized (reportLock) {
+            byte[] report = buildGamepadReport(
+                    buttons, leftX, leftY, rightX, rightY, navigationButtons);
+            latestGamepadReport = report.clone();
             boolean buttonEdge = buttons != lastQueuedButtons;
             lastQueuedButtons = buttons;
 
@@ -270,7 +284,7 @@ public final class BluetoothHidGamepad {
 
     /** Send one absolute HID touchscreen contact (normalized coordinates 0..1). */
     public void sendTouchPoint(boolean pressed, float x, float y) {
-        if (!connected || reportHandler == null) return;
+        if (!connected || reportHandler == null || gamepadMode) return;
 
         byte[] report = buildTouchReport(pressed, x, y);
         synchronized (reportLock) {
@@ -310,6 +324,62 @@ public final class BluetoothHidGamepad {
         return new byte[] { 0, 1, 0, 0, 0, 0, 0 };
     }
 
+    /**
+     * Switches between mutually exclusive Touch HID and Gamepad modes while
+     * keeping the same composite HID registration and Bluetooth connection.
+     */
+    public void setInputMode(boolean useGamepad) {
+        if (!connected || reportHandler == null) {
+            gamepadMode = useGamepad;
+            return;
+        }
+        synchronized (reportLock) {
+            if (gamepadMode == useGamepad) return;
+            gamepadMode = useGamepad;
+            navigationButtons = 0;
+            navigationGeneration++;
+            pendingGamepadReport = null;
+            pendingTouchReport = null;
+            latestGamepadReport = neutralReport();
+            lastQueuedButtons = -1;
+            lastQueuedTouchPressed = false;
+            reportHandler.removeCallbacks(sendLatestGamepadReport);
+            reportHandler.removeCallbacks(sendLatestTouchReport);
+            reportHandler.post(this::sendNeutralReports);
+        }
+    }
+
+    /** Send standard AC Home (1) or AC Back (2) over Bluetooth HID. */
+    public boolean sendNavigation(int action) {
+        if (!connected || reportHandler == null || (action != 1 && action != 2)) {
+            return false;
+        }
+        synchronized (reportLock) {
+            final int bit = action == 1 ? 0x01 : 0x02;
+            final int generation = ++navigationGeneration;
+            navigationButtons = bit;
+            byte[] pressed = latestGamepadReport.clone();
+            pressed[9] = (byte) bit;
+            reportHandler.post(() -> sendReportNow(GAMEPAD_REPORT_ID, pressed));
+            reportHandler.postDelayed(() -> {
+                byte[] released;
+                synchronized (reportLock) {
+                    if (generation != navigationGeneration) return;
+                    navigationButtons = 0;
+                    released = latestGamepadReport.clone();
+                    released[9] = 0;
+                }
+                sendReportNow(GAMEPAD_REPORT_ID, released);
+            }, 90L);
+        }
+        return true;
+    }
+
+    private void sendNeutralReports() {
+        sendReportNow(GAMEPAD_REPORT_ID, neutralReport());
+        sendReportNow(TOUCH_REPORT_ID, neutralTouchReport());
+    }
+
     private void sendPendingTouchReport() {
         synchronized (reportLock) {
             byte[] report = pendingTouchReport;
@@ -347,8 +417,8 @@ public final class BluetoothHidGamepad {
     }
 
     private byte[] buildGamepadReport(
-            int buttons, float lx, float ly, float rx, float ry) {
-        byte[] report = new byte[9];
+            int buttons, float lx, float ly, float rx, float ry, int navigation) {
+        byte[] report = new byte[10];
         int mask = buttons & 0x03FF;
         if ((buttons & (1 << 14)) != 0) mask |= (1 << 10); // L3
         if ((buttons & (1 << 15)) != 0) mask |= (1 << 11); // R3
@@ -362,14 +432,15 @@ public final class BluetoothHidGamepad {
         report[6] = toAxis(ry); // Rz
         report[7] = (byte) ((buttons & (1 << 6)) != 0 ? 255 : 0); // Brake
         report[8] = (byte) ((buttons & (1 << 7)) != 0 ? 255 : 0); // Accelerator
+        report[9] = (byte) (navigation & 0x03); // Consumer Home / Back
         return report;
     }
 
-    private byte[] neutralReport(int id) {
+    private byte[] neutralReport() {
         return new byte[] {
                 0, 0, 8,
                 (byte) 128, (byte) 128, (byte) 128, (byte) 128,
-                0, 0
+                0, 0, 0
         };
     }
 
@@ -404,6 +475,9 @@ public final class BluetoothHidGamepad {
             pendingGamepadReport = null;
             lastQueuedTouchPressed = false;
             pendingTouchReport = null;
+            navigationButtons = 0;
+            navigationGeneration++;
+            latestGamepadReport = neutralReport();
 
             if (reportHandler != null) {
                 reportHandler.removeCallbacksAndMessages(null);
@@ -415,7 +489,7 @@ public final class BluetoothHidGamepad {
         try {
             if (connected && hidDevice != null && target != null) {
                 hidDevice.sendReport(
-                        target, GAMEPAD_REPORT_ID, neutralReport(GAMEPAD_REPORT_ID));
+                        target, GAMEPAD_REPORT_ID, neutralReport());
                 hidDevice.sendReport(target, TOUCH_REPORT_ID, neutralTouchReport());
             }
             if (hidDevice != null) {

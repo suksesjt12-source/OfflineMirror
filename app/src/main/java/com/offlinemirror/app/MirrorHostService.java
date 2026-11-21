@@ -742,16 +742,6 @@ public class MirrorHostService extends Service {
                         }
                         continue;
                     }
-                    if (type == 8) {
-                        int action = input.readUnsignedByte();
-                        boolean accepted = RemoteNavigationAccessibilityService
-                                .requestGlobalNavigation(action);
-                        synchronized (output) {
-                            output.writeByte(accepted ? 1 : 0);
-                            output.flush();
-                        }
-                        continue;
-                    }
                     if (type == 6) {
                         int action = input.readUnsignedByte();
                         AudioManager manager = (AudioManager)
