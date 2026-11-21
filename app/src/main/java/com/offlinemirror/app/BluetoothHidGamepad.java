@@ -69,24 +69,65 @@ public final class BluetoothHidGamepad {
         0x75, 0x05, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
         (byte) 0xC0,
 
-        // Experimental HID Digitizer Touch Screen: one absolute contact.
+        // Five independent Digitizer Finger collections in one HID report.
         0x05, 0x0D, 0x09, 0x04, (byte) 0xA1, 0x01,
         (byte) 0x85, 0x02,
         0x09, 0x22, (byte) 0xA1, 0x02,
-        0x09, 0x42, 0x09, 0x32,
-        0x15, 0x00, 0x25, 0x01,
+        0x09, 0x42, 0x09, 0x32, 0x15, 0x00, 0x25, 0x01,
         0x75, 0x01, (byte) 0x95, 0x02, (byte) 0x81, 0x02,
         0x75, 0x06, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
-        0x09, 0x51, 0x15, 0x00, 0x26, (byte) 0xFF, 0x00,
+        0x09, 0x51, 0x15, 0x01, 0x25, 0x05,
         0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
         0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
         0x16, 0x00, 0x00, 0x26, (byte) 0xFF, 0x7F,
         0x36, 0x00, 0x00, 0x46, (byte) 0xFF, 0x7F,
-        0x55, 0x00, 0x65, 0x00,
-        0x75, 0x10, (byte) 0x95, 0x02, (byte) 0x81, 0x02,
-        (byte) 0xC0,
-        0x05, 0x0D, 0x09, 0x54,
-        0x15, 0x00, 0x25, 0x01,
+        0x55, 0x00, 0x65, 0x00, 0x75, 0x10,
+        (byte) 0x95, 0x02, (byte) 0x81, 0x02, (byte) 0xC0,
+        0x09, 0x22, (byte) 0xA1, 0x02,
+        0x09, 0x42, 0x09, 0x32, 0x15, 0x00, 0x25, 0x01,
+        0x75, 0x01, (byte) 0x95, 0x02, (byte) 0x81, 0x02,
+        0x75, 0x06, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
+        0x09, 0x51, 0x15, 0x01, 0x25, 0x05,
+        0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
+        0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
+        0x16, 0x00, 0x00, 0x26, (byte) 0xFF, 0x7F,
+        0x36, 0x00, 0x00, 0x46, (byte) 0xFF, 0x7F,
+        0x55, 0x00, 0x65, 0x00, 0x75, 0x10,
+        (byte) 0x95, 0x02, (byte) 0x81, 0x02, (byte) 0xC0,
+        0x09, 0x22, (byte) 0xA1, 0x02,
+        0x09, 0x42, 0x09, 0x32, 0x15, 0x00, 0x25, 0x01,
+        0x75, 0x01, (byte) 0x95, 0x02, (byte) 0x81, 0x02,
+        0x75, 0x06, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
+        0x09, 0x51, 0x15, 0x01, 0x25, 0x05,
+        0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
+        0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
+        0x16, 0x00, 0x00, 0x26, (byte) 0xFF, 0x7F,
+        0x36, 0x00, 0x00, 0x46, (byte) 0xFF, 0x7F,
+        0x55, 0x00, 0x65, 0x00, 0x75, 0x10,
+        (byte) 0x95, 0x02, (byte) 0x81, 0x02, (byte) 0xC0,
+        0x09, 0x22, (byte) 0xA1, 0x02,
+        0x09, 0x42, 0x09, 0x32, 0x15, 0x00, 0x25, 0x01,
+        0x75, 0x01, (byte) 0x95, 0x02, (byte) 0x81, 0x02,
+        0x75, 0x06, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
+        0x09, 0x51, 0x15, 0x01, 0x25, 0x05,
+        0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
+        0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
+        0x16, 0x00, 0x00, 0x26, (byte) 0xFF, 0x7F,
+        0x36, 0x00, 0x00, 0x46, (byte) 0xFF, 0x7F,
+        0x55, 0x00, 0x65, 0x00, 0x75, 0x10,
+        (byte) 0x95, 0x02, (byte) 0x81, 0x02, (byte) 0xC0,
+        0x09, 0x22, (byte) 0xA1, 0x02,
+        0x09, 0x42, 0x09, 0x32, 0x15, 0x00, 0x25, 0x01,
+        0x75, 0x01, (byte) 0x95, 0x02, (byte) 0x81, 0x02,
+        0x75, 0x06, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
+        0x09, 0x51, 0x15, 0x01, 0x25, 0x05,
+        0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
+        0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
+        0x16, 0x00, 0x00, 0x26, (byte) 0xFF, 0x7F,
+        0x36, 0x00, 0x00, 0x46, (byte) 0xFF, 0x7F,
+        0x55, 0x00, 0x65, 0x00, 0x75, 0x10,
+        (byte) 0x95, 0x02, (byte) 0x81, 0x02, (byte) 0xC0
+        0x05, 0x0D, 0x09, 0x54, 0x15, 0x00, 0x25, 0x05,
         0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
         (byte) 0xC0
     };
@@ -105,7 +146,7 @@ public final class BluetoothHidGamepad {
     private byte[] pendingGamepadReport;
     private byte[] pendingTouchReport;
     private int lastQueuedButtons = -1;
-    private boolean lastQueuedTouchPressed;
+    private int lastQueuedTouchCount;
     private volatile boolean gamepadMode = false;
     private byte[] latestGamepadReport = new byte[] {
             0, 0, 8, (byte) 128, (byte) 128, (byte) 128, (byte) 128, 0, 0
@@ -290,14 +331,14 @@ public final class BluetoothHidGamepad {
         }
     }
 
-    /** Send one absolute HID touchscreen contact (normalized coordinates 0..1). */
-    public void sendTouchPoint(boolean pressed, float x, float y) {
+    /** Send up to five simultaneous absolute HID touchscreen contacts. */
+    public void sendTouchContacts(int[] contactIds, float[] xs, float[] ys) {
         if (!connected || reportHandler == null || gamepadMode) return;
-
-        byte[] report = buildTouchReport(pressed, x, y);
+        byte[] report = buildTouchReport(contactIds, xs, ys);
+        int count = contactIds == null ? 0 : Math.min(5, contactIds.length);
         synchronized (reportLock) {
-            boolean edge = pressed != lastQueuedTouchPressed;
-            lastQueuedTouchPressed = pressed;
+            boolean edge = count != lastQueuedTouchCount;
+            lastQueuedTouchCount = count;
             if (edge) {
                 pendingTouchReport = null;
                 reportHandler.removeCallbacks(sendLatestTouchReport);
@@ -305,21 +346,43 @@ public final class BluetoothHidGamepad {
             } else {
                 pendingTouchReport = report;
                 reportHandler.removeCallbacks(sendLatestTouchReport);
-                reportHandler.postDelayed(sendLatestTouchReport, 8L);
+                reportHandler.postDelayed(sendLatestTouchReport, 6L);
             }
         }
     }
 
-    private byte[] buildTouchReport(boolean pressed, float x, float y) {
-        int px = toTouchCoordinate(x);
-        int py = toTouchCoordinate(y);
-        return new byte[] {
-                (byte) (pressed ? 0x03 : 0x00), // Tip Switch + In Range
-                1,                              // Contact Identifier
-                (byte) (px & 0xFF), (byte) ((px >>> 8) & 0xFF),
-                (byte) (py & 0xFF), (byte) ((py >>> 8) & 0xFF),
-                (byte) (pressed ? 1 : 0)        // Contact Count
-        };
+    public void sendTouchPoint(boolean pressed, float x, float y) {
+        sendTouchContacts(pressed ? new int[]{1} : new int[0],
+                pressed ? new float[]{x} : new float[0],
+                pressed ? new float[]{y} : new float[0]);
+    }
+
+    private byte[] buildTouchReport(int[] contactIds, float[] xs, float[] ys) {
+        byte[] report = new byte[31];
+        int count = 0;
+        for (int slot = 0; slot < 5; slot++) {
+            int contactId = slot + 1;
+            int source = -1;
+            if (contactIds != null) {
+                for (int i = 0; i < Math.min(5, contactIds.length); i++) {
+                    if (contactIds[i] == contactId) { source = i; break; }
+                }
+            }
+            int offset = slot * 6;
+            report[offset] = (byte) (source >= 0 ? 0x03 : 0x00);
+            report[offset + 1] = (byte) contactId;
+            int px = source >= 0 && xs != null && source < xs.length
+                    ? toTouchCoordinate(xs[source]) : 0;
+            int py = source >= 0 && ys != null && source < ys.length
+                    ? toTouchCoordinate(ys[source]) : 0;
+            report[offset + 2] = (byte) (px & 0xFF);
+            report[offset + 3] = (byte) ((px >>> 8) & 0xFF);
+            report[offset + 4] = (byte) (py & 0xFF);
+            report[offset + 5] = (byte) ((py >>> 8) & 0xFF);
+            if (source >= 0) count++;
+        }
+        report[30] = (byte) count;
+        return report;
     }
 
     private int toTouchCoordinate(float value) {
@@ -329,7 +392,9 @@ public final class BluetoothHidGamepad {
     }
 
     private byte[] neutralTouchReport() {
-        return new byte[] { 0, 1, 0, 0, 0, 0, 0 };
+        byte[] report = new byte[31];
+        for (int slot = 0; slot < 5; slot++) report[slot * 6 + 1] = (byte) (slot + 1);
+        return report;
     }
 
     /**
@@ -349,7 +414,7 @@ public final class BluetoothHidGamepad {
             pendingTouchReport = null;
             latestGamepadReport = neutralReport();
             lastQueuedButtons = -1;
-            lastQueuedTouchPressed = false;
+            lastQueuedTouchCount = 0;
             reportHandler.removeCallbacks(sendLatestGamepadReport);
             reportHandler.removeCallbacks(sendLatestTouchReport);
             reportHandler.post(this::sendNeutralReports);
@@ -358,7 +423,7 @@ public final class BluetoothHidGamepad {
 
     /** Send Recent Apps (3), Home (1), or Back (2) over the same Bluetooth HID device. */
     public boolean sendNavigation(int action) {
-        if (!connected || reportHandler == null
+        if (!connected || reportHandler == null || gamepadMode
                 || (action != 1 && action != 2 && action != 3)) {
             return false;
         }
@@ -481,7 +546,7 @@ public final class BluetoothHidGamepad {
         synchronized (reportLock) {
             lastQueuedButtons = -1;
             pendingGamepadReport = null;
-            lastQueuedTouchPressed = false;
+            lastQueuedTouchCount = 0;
             pendingTouchReport = null;
             navigationGeneration++;
             latestGamepadReport = neutralReport();

@@ -205,7 +205,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
         });
         touchOverlay = new TouchOverlayView(this);
-        touchOverlay.setListener(this::sendTouchPoint);
+        touchOverlay.setListener(this::sendTouchContacts);
         videoFrame.addView(touchOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         videoFrame.addView(gamepadOverlay, new FrameLayout.LayoutParams(
@@ -924,9 +924,9 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         return rendered;
     }
 
-    private void sendTouchPoint(boolean pressed, float x, float y) {
+    private void sendTouchContacts(int[] contactIds, float[] xs, float[] ys) {
         if (!controlEnabled || bluetoothGamepad == null) return;
-        bluetoothGamepad.sendTouchPoint(pressed, x, y);
+        bluetoothGamepad.sendTouchContacts(contactIds, xs, ys);
     }
 
     private void toggleLayoutEditMode(Button button) {
@@ -1187,129 +1187,94 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
  * share ViewerActivity's source file and protocol types.
  */
 final class TouchOverlayView extends View {
-    interface Listener {
-        void onTouchPoint(boolean pressed, float x, float y);
-    }
-
+    interface Listener { void onTouchContacts(int[] contactIds, float[] xs, float[] ys); }
+    private static final int MAX_CONTACTS = 5;
     private final RectF content = new RectF();
+    private final int[] pointerIds = {-1, -1, -1, -1, -1};
+    private final float[] contactX = new float[MAX_CONTACTS];
+    private final float[] contactY = new float[MAX_CONTACTS];
     private Listener listener;
     private float aspectRatio;
-    private int activePointerId = -1;
-    private float lastX;
-    private float lastY;
 
     TouchOverlayView(android.content.Context context) {
         super(context);
         setBackgroundColor(Color.TRANSPARENT);
         setWillNotDraw(true);
         setClickable(true);
-        setContentDescription("Eksperimental Bluetooth HID Touchscreen");
+        setContentDescription("Multi-touch HID • hingga lima sentuhan bersamaan");
     }
-
     void setListener(Listener value) { listener = value; }
-
     void setSourceAspectRatio(int width, int height) {
-        if (width > 0 && height > 0) {
-            aspectRatio = (float) width / (float) height;
-            updateContent();
-        }
+        if (width > 0 && height > 0) { aspectRatio = (float) width / height; updateContent(); }
     }
-
     private void updateContent() {
         if (getWidth() <= 0 || getHeight() <= 0) return;
-        if (aspectRatio <= 0f) {
-            content.set(0f, 0f, getWidth(), getHeight());
-        } else if ((float) getWidth() / getHeight() > aspectRatio) {
-            float width = getHeight() * aspectRatio;
-            float left = (getWidth() - width) * 0.5f;
+        if (aspectRatio <= 0f) content.set(0f, 0f, getWidth(), getHeight());
+        else if ((float) getWidth() / getHeight() > aspectRatio) {
+            float width = getHeight() * aspectRatio, left = (getWidth() - width) * .5f;
             content.set(left, 0f, left + width, getHeight());
         } else {
-            float height = getWidth() / aspectRatio;
-            float top = (getHeight() - height) * 0.5f;
+            float height = getWidth() / aspectRatio, top = (getHeight() - height) * .5f;
             content.set(0f, top, getWidth(), top + height);
         }
     }
-
-    private float clamp(float value) {
-        return Math.max(0f, Math.min(1f, value));
+    private int findSlot(int pointerId) {
+        for (int i=0;i<MAX_CONTACTS;i++) if(pointerIds[i]==pointerId)return i;
+        return -1;
     }
-
-    private boolean mapPoint(float viewX, float viewY) {
-        if (content.width() <= 0f || content.height() <= 0f) return false;
-        lastX = clamp((viewX - content.left) / content.width());
-        lastY = clamp((viewY - content.top) / content.height());
-        return true;
+    private int freeSlot() {
+        for (int i=0;i<MAX_CONTACTS;i++) if(pointerIds[i]==-1)return i;
+        return -1;
     }
-
-    private void emit(boolean pressed) {
-        if (listener != null) listener.onTouchPoint(pressed, lastX, lastY);
+    private void mapPoint(float x,float y,int slot) {
+        if(slot<0||content.width()<=0||content.height()<=0)return;
+        contactX[slot]=Math.max(0f,Math.min(1f,(x-content.left)/content.width()));
+        contactY[slot]=Math.max(0f,Math.min(1f,(y-content.top)/content.height()));
     }
-
-    private void begin(MotionEvent event, int index) {
-        if (activePointerId != -1 || !content.contains(event.getX(index), event.getY(index))) {
-            return;
+    private void emit() {
+        if(listener==null)return;
+        int count=0;for(int id:pointerIds)if(id!=-1)count++;
+        int[] ids=new int[count];float[] xs=new float[count];float[] ys=new float[count];
+        int out=0;
+        for(int slot=0;slot<MAX_CONTACTS;slot++)if(pointerIds[slot]!=-1){
+            ids[out]=slot+1;xs[out]=contactX[slot];ys[out]=contactY[slot];out++;
         }
-        activePointerId = event.getPointerId(index);
-        if (mapPoint(event.getX(index), event.getY(index))) emit(true);
+        listener.onTouchContacts(ids,xs,ys);
     }
-
-    private void move(MotionEvent event) {
-        if (activePointerId == -1) return;
-        int index = event.findPointerIndex(activePointerId);
-        if (index < 0) return;
-        if (mapPoint(event.getX(index), event.getY(index))) emit(true);
+    private void begin(MotionEvent e,int index) {
+        int id=e.getPointerId(index);
+        if(findSlot(id)!=-1||!content.contains(e.getX(index),e.getY(index)))return;
+        int slot=freeSlot();if(slot<0)return;
+        pointerIds[slot]=id;mapPoint(e.getX(index),e.getY(index),slot);emit();
     }
-
-    private void finish(int pointerId) {
-        if (activePointerId != pointerId) return;
-        emit(false);
-        activePointerId = -1;
-        performClick();
+    private void move(MotionEvent e) {
+        boolean changed=false;
+        for(int i=0;i<e.getPointerCount();i++){
+            int slot=findSlot(e.getPointerId(i));
+            if(slot>=0){mapPoint(e.getX(i),e.getY(i),slot);changed=true;}
+        }
+        if(changed)emit();
     }
-
+    private void finish(int id) {
+        int slot=findSlot(id);if(slot<0)return;
+        pointerIds[slot]=-1;emit();performClick();
+    }
     void cancelTouches() {
-        if (activePointerId != -1) {
-            emit(false);
-            activePointerId = -1;
-        }
+        boolean changed=false;
+        for(int i=0;i<MAX_CONTACTS;i++)if(pointerIds[i]!=-1){pointerIds[i]=-1;changed=true;}
+        if(changed)emit();
     }
-
-    @Override protected void onSizeChanged(int w, int h, int oldW, int oldH) {
-        super.onSizeChanged(w, h, oldW, oldH);
-        updateContent();
-        cancelTouches();
+    @Override protected void onSizeChanged(int w,int h,int oldW,int oldH) {
+        super.onSizeChanged(w,h,oldW,oldH);updateContent();cancelTouches();
     }
-
-    @Override public boolean onTouchEvent(MotionEvent event) {
-        int action = event.getActionMasked();
-        int index = event.getActionIndex();
-        if (action == MotionEvent.ACTION_DOWN) {
-            begin(event, index);
-            return true;
-        }
-        if (action == MotionEvent.ACTION_MOVE) {
-            move(event);
-            return activePointerId != -1;
-        }
-        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
-            finish(event.getPointerId(index));
-            return true;
-        }
-        if (action == MotionEvent.ACTION_CANCEL) {
-            cancelTouches();
-            return true;
-        }
-        // This experimental HID descriptor exposes a single contact only.
-        return activePointerId != -1;
-    }
-
-    @Override public boolean performClick() {
-        super.performClick();
+    @Override public boolean onTouchEvent(MotionEvent e) {
+        int action=e.getActionMasked(),index=e.getActionIndex();
+        if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_POINTER_DOWN){begin(e,index);return true;}
+        if(action==MotionEvent.ACTION_MOVE){move(e);return true;}
+        if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_POINTER_UP){finish(e.getPointerId(index));return true;}
+        if(action==MotionEvent.ACTION_CANCEL){cancelTouches();return true;}
         return true;
     }
-
-    @Override protected void onDetachedFromWindow() {
-        cancelTouches();
-        super.onDetachedFromWindow();
-    }
+    @Override public boolean performClick(){super.performClick();return true;}
+    @Override protected void onDetachedFromWindow(){cancelTouches();super.onDetachedFromWindow();}
 }
