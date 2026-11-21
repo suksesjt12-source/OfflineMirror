@@ -15,6 +15,8 @@ import java.util.concurrent.Executor;
 
 /** Standard Bluetooth HID virtual gamepad peripheral. */
 public final class BluetoothHidGamepad {
+    public enum InputMode { TOUCH, GAMEPAD }
+
     public interface StatusListener {
         void onStatus(String message);
     }
@@ -96,6 +98,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     private volatile boolean profileSwitchPending = false;
     private volatile boolean registrationRequested = false;
     private volatile boolean registeredProfileGamepad = false;
+    private volatile InputMode inputMode = InputMode.GAMEPAD;
 
     private final Runnable sendLatestGamepadReport =
             () -> sendPendingGamepadReport();
@@ -108,6 +111,11 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     }
 
     public void start(BluetoothDevice targetDevice) {
+        start(targetDevice, InputMode.GAMEPAD);
+    }
+
+    public void start(BluetoothDevice targetDevice, InputMode mode) {
+        inputMode = mode == null ? InputMode.GAMEPAD : mode;
         if (Build.VERSION.SDK_INT < 28) {
             status("Bluetooth HID membutuhkan Android 9+");
             return;
@@ -126,7 +134,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             if (!requested) {
                 status("Bluetooth HID Device tidak didukung firmware HP ini");
             } else {
-                status("Mendaftarkan Bluetooth HID Touch + Gamepad + Home/Back...");
+                status("Mendaftarkan Bluetooth HID " + (inputMode == InputMode.GAMEPAD ? "Gamepad..." : "Touch HID..."));
             }
         } catch (SecurityException denied) {
             status("Izin Bluetooth tidak diberikan");
@@ -150,15 +158,19 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         BluetoothHidDevice device = hidDevice;
         if (device == null) { status("Bluetooth HID belum siap"); return; }
         registrationRequested = true;
+        boolean gamepad = inputMode == InputMode.GAMEPAD;
+        byte[] descriptor = gamepad ? GAMEPAD_REPORT_DESCRIPTOR : TOUCH_REPORT_DESCRIPTOR;
+        String deviceName = gamepad ? "OfflineMirror Gamepad" : "OfflineMirror Touch HID";
+        String description = gamepad
+                ? "OfflineMirror Bluetooth Gamepad Controller"
+                : "OfflineMirror Bluetooth Touchscreen";
+        byte subclass = gamepad ? (byte) BluetoothHidDevice.SUBCLASS2_GAMEPAD : (byte) 0x00;
         BluetoothHidDeviceAppSdpSettings sdp = new BluetoothHidDeviceAppSdpSettings(
-                "OfflineMirror Hybrid",
-                "OfflineMirror Bluetooth Touchscreen + Gamepad",
-                "OfflineMirror", (byte) BluetoothHidDevice.SUBCLASS2_GAMEPAD,
-                COMPOSITE_REPORT_DESCRIPTOR);
+                deviceName, description, "OfflineMirror", subclass, descriptor);
         boolean ok = device.registerApp(sdp, null, null, context.getMainExecutor(), callback);
         if (!ok) registrationRequested = false;
-        status(ok ? "Jaringan 2 • profil Bluetooth HID Hybrid didaftarkan"
-                  : "Pendaftaran profil Bluetooth HID Hybrid gagal");
+        status(ok ? "Bluetooth " + (gamepad ? "Gamepad" : "Touch HID") + " didaftarkan"
+                  : "Pendaftaran Bluetooth " + (gamepad ? "Gamepad" : "Touch HID") + " gagal");
     }
 
     private final BluetoothProfile.ServiceListener profileListener =
@@ -207,9 +219,9 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             }
             registrationRequested = false;
             if (target == null) {
-                status("Jaringan 2 • pair OfflineMirror Controller dari HP Host");
+                status("Pair OfflineMirror " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + " dari HP Host");
             } else {
-                status("Jaringan 2 • menyambungkan OfflineMirror Controller...");
+                status("Menyambungkan OfflineMirror " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + "...");
                 try {
                     if (hidDevice != null && !hidDevice.connect(target))
                         status("Koneksi ditolak • periksa pairing Bluetooth Host");
@@ -225,7 +237,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             if (connected) {
                 target = device;
                 resetQueuedState();
-                status("Jaringan 2 aktif • HID Hybrid Touch + Gamepad siap");
+                status("Bluetooth " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + " aktif dan siap");
                 sendNeutralReport();
             } else if (state == BluetoothProfile.STATE_CONNECTING) {
                 status("Bluetooth HID sedang menyambungkan...");
@@ -266,7 +278,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         // The overlay visibility is controlled by ViewerActivity. Do not gate reports
         // on a second mode flag here: that flag can lag a UI transition and silently
         // discard every button event after switching from Touch HID to Gamepad.
-        if (!connected || reportHandler == null) return;
+        if (inputMode != InputMode.GAMEPAD || !connected || reportHandler == null) return;
 
         // Keep report construction out of the shared lock. Motion events arrive on
         // the UI thread and must never wait for Bluetooth Binder work.
@@ -295,7 +307,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
 
     /** Experimental single-contact absolute HID touchscreen input. */
     public void sendTouchContacts(int[] contactIds, float[] xs, float[] ys) {
-        if (!connected || reportHandler == null) return;
+        if (inputMode != InputMode.TOUCH || !connected || reportHandler == null) return;
 
         boolean pressed = contactIds != null && contactIds.length > 0
                 && xs != null && xs.length > 0 && ys != null && ys.length > 0;
@@ -351,19 +363,9 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         return new byte[] { 0, 1, 0, 0, 0, 0, 0 };
     }
 
-    /**
-     * Both HID collections remain registered. This setting only controls whether
-     * the on-screen gamepad overlay is shown; touchscreen reports stay enabled.
-     */
+    /** Select one independent Bluetooth HID personality per registration. */
     public void setInputMode(boolean showGamepadOverlay) {
-        gamepadMode = showGamepadOverlay;
-        if (connected) {
-            status(showGamepadOverlay
-                    ? "HID Hybrid aktif • Touch + Gamepad"
-                    : "HID Hybrid aktif • Touch saja (Gamepad siap saat overlay dibuka)");
-        } else {
-            status("HID Hybrid disiapkan • Touch + Gamepad menunggu Bluetooth");
-        }
+        inputMode = showGamepadOverlay ? InputMode.GAMEPAD : InputMode.TOUCH;
     }
 
     public boolean isConnected() {
@@ -371,7 +373,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     }
 
     public String getActiveProfileName() {
-        return "Bluetooth HID Hybrid (Touch + Gamepad)";
+        return "Bluetooth HID " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID");
     }
 
     public boolean isGamepadMode() {
@@ -379,8 +381,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     }
 
     private void sendNeutralReport() {
-        sendReportNow(GAMEPAD_REPORT_ID, neutralReport());
-        sendReportNow(TOUCH_REPORT_ID, neutralTouchReport());
+        if (inputMode == InputMode.GAMEPAD) sendReportNow(GAMEPAD_REPORT_ID, neutralReport());
+        else sendReportNow(TOUCH_REPORT_ID, neutralTouchReport());
     }
 
     private void sendPendingTouchReport() {
@@ -475,8 +477,9 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     public void stop() {
         try {
             if (connected && hidDevice != null && target != null) {
-                hidDevice.sendReport(target, GAMEPAD_REPORT_ID, neutralReport());
-                hidDevice.sendReport(target, TOUCH_REPORT_ID, neutralTouchReport());
+                if (inputMode == InputMode.GAMEPAD)
+                    hidDevice.sendReport(target, GAMEPAD_REPORT_ID, neutralReport());
+                else hidDevice.sendReport(target, TOUCH_REPORT_ID, neutralTouchReport());
             }
             if (hidDevice != null) {
                 if (registered) hidDevice.unregisterApp();
