@@ -99,6 +99,23 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     private volatile boolean registrationRequested = false;
     private volatile boolean registeredProfileGamepad = false;
     private volatile InputMode inputMode = InputMode.GAMEPAD;
+    private volatile boolean stopping;
+    private final Handler reconnectHandler = new Handler(android.os.Looper.getMainLooper());
+    private final Runnable reconnectTask = () -> {
+        BluetoothHidDevice device = hidDevice;
+        BluetoothDevice receiver = target;
+        if (stopping || connected || !registered || device == null || receiver == null) return;
+        try {
+            if (receiver.getBondState() == BluetoothDevice.BOND_BONDED) {
+                status("Bluetooth terputus; mencoba menyambungkan kembali...");
+                if (!device.connect(receiver)) status("Auto reconnect ditolak; sambungkan dari menu Bluetooth");
+            }
+        } catch (SecurityException denied) {
+            status("Izin Bluetooth Connect diperlukan untuk auto reconnect");
+        } catch (Exception error) {
+            status("Auto reconnect gagal: " + error.getMessage());
+        }
+    };
 
     private final Runnable sendLatestGamepadReport =
             () -> sendPendingGamepadReport();
@@ -115,6 +132,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     }
 
     public void start(BluetoothDevice targetDevice, InputMode mode) {
+        stopping = false;
         inputMode = mode == null ? InputMode.GAMEPAD : mode;
         if (Build.VERSION.SDK_INT < 28) {
             status("Bluetooth HID membutuhkan Android 9+");
@@ -252,6 +270,10 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 status("Bluetooth HID sedang menyambungkan...");
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
                 resetQueuedState();
+                if (!stopping && registered && target != null) {
+                    reconnectHandler.removeCallbacks(reconnectTask);
+                    reconnectHandler.postDelayed(reconnectTask, 1200L);
+                }
                 status("Bluetooth " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID")
                         + " terputus; sambungkan ulang dari Viewer");
             }
@@ -520,6 +542,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     }
 
     public void stop() {
+        stopping = true;
+        reconnectHandler.removeCallbacks(reconnectTask);
         try {
             if (connected && hidDevice != null && target != null) {
                 if (inputMode == InputMode.GAMEPAD)
