@@ -56,6 +56,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     private static final int MAGIC = 0x4F4D4952;
     private static final int CONTROL_MAGIC = 0x4F4D4354;
     private static final int REQUEST_BLUETOOTH = 7721;
+    private static final int REQUEST_BLUETOOTH_DISCOVERABLE = 7722;
 
     private TextureView textureView;
     private Surface videoSurface;
@@ -723,6 +724,42 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
                 .setNegativeButton("Batal", null).show();
     }
 
+    private void requestBluetoothDiscoverable() {
+        if (Build.VERSION.SDK_INT >= 31
+                && checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+                    != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "Izin Bluetooth Advertise diperlukan agar Vivo terlihat oleh HP lain.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        try {
+            Intent discoverable = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
+            discoverable.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
+            startActivityForResult(discoverable, REQUEST_BLUETOOTH_DISCOVERABLE);
+            bluetoothStatus = "Izinkan perangkat terlihat selama 5 menit pada dialog Android.";
+            updateStatus();
+        } catch (Exception error) {
+            bluetoothStatus = "Gagal meminta mode terlihat: " + error.getMessage();
+            updateStatus();
+            android.util.Log.e("OfflineMirror", "Could not request Bluetooth discoverability", error);
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_BLUETOOTH_DISCOVERABLE) {
+            if (resultCode > 0) {
+                bluetoothStatus = "Vivo terlihat oleh HP lain selama " + resultCode
+                        + " detik. Sekarang cari dari Bluetooth Infinix.";
+            } else {
+                bluetoothStatus = "Mode terlihat ditolak. Infinix mungkin tidak dapat menemukan Vivo.";
+            }
+            updateStatus();
+        }
+    }
+
     private void startBluetoothGamepad(BluetoothDevice device) {
         if (bluetoothGamepad != null) bluetoothGamepad.stop();
         bluetoothGamepad = new BluetoothHidGamepad(this, message -> runOnUiThread(() -> {
@@ -757,6 +794,9 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         if (bluetoothButton != null) bluetoothButton.setText("JARINGAN 2: CONNECTING");
         bluetoothGamepad.setInputMode(gamepadInputMode);
         bluetoothGamepad.start(device);
+        // A phone acting as a HID peripheral must be discoverable by the Host
+        // during first pairing. Android normally keeps phones non-discoverable.
+        if (device == null) requestBluetoothDiscoverable();
     }
 
     @Override
