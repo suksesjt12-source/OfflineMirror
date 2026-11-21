@@ -1065,80 +1065,111 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     }
 
     private void receiveAudio() {
-        AudioTrack track = null;
-        DataInputStream input = null;
-        try {
-            audioSocket = new Socket();
-            audioSocket.setTcpNoDelay(true);
-            audioSocket.connect(new InetSocketAddress(host, audioPort), 12_000);
-            authenticateSocket(audioSocket);
-            input = new DataInputStream(
-                    new BufferedInputStream(audioSocket.getInputStream(), 32 * 1024));
+        while (running) {
+            AudioTrack track = null;
+            DataInputStream input = null;
+            Socket socket = new Socket();
+            try {
+                socket.setTcpNoDelay(true);
+                socket.setKeepAlive(true);
+                socket.connect(new InetSocketAddress(host, audioPort), 12_000);
+                audioSocket = socket;
+                authenticateSocket(socket);
+                input = new DataInputStream(
+                        new BufferedInputStream(socket.getInputStream(), 32 * 1024));
 
-            int sampleRate = input.readInt();
-            int channels = input.readInt();
-            int encoding = input.readInt();
-            if (sampleRate < 8000 || sampleRate > 96000 || (channels != 1 && channels != 2)) {
-                throw new IllegalStateException("Format audio Host tidak valid");
-            }
-
-            int channelMask = channels == 1
-                    ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
-            int minBuffer = AudioTrack.getMinBufferSize(
-                    sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT);
-            int bufferSize = Math.max(8192, minBuffer > 0 ? minBuffer * 2 : 16384);
-
-            track = new AudioTrack.Builder()
-                    .setAudioAttributes(new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build())
-                    .setAudioFormat(new AudioFormat.Builder()
-                            .setEncoding(encoding)
-                            .setSampleRate(sampleRate)
-                            .setChannelMask(channelMask)
-                            .build())
-                    .setBufferSizeInBytes(bufferSize)
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .build();
-
-            if (track.getState() != AudioTrack.STATE_INITIALIZED) {
-                throw new IllegalStateException("Output audio tidak dapat diinisialisasi");
-            }
-            track.play();
-            audioStatus = "Audio: terhubung";
-            updateStatus();
-
-            while (running) {
-                int count = input.readInt();
-                if (count <= 0 || count > 65536) {
-                    throw new IllegalStateException("Paket audio tidak valid");
+                int sampleRate = input.readInt();
+                int channels = input.readInt();
+                int encoding = input.readInt();
+                if (sampleRate < 8000 || sampleRate > 96000
+                        || (channels != 1 && channels != 2)
+                        || encoding != AudioFormat.ENCODING_PCM_16BIT) {
+                    throw new IllegalStateException("Format audio Host tidak valid");
                 }
-                byte[] pcm = new byte[count];
-                input.readFully(pcm);
-                int offset = 0;
-                while (offset < count && running) {
-                    int written = track.write(pcm, offset, count - offset,
-                            AudioTrack.WRITE_BLOCKING);
-                    if (written < 0) throw new IllegalStateException("Output audio terhenti");
-                    offset += written;
+
+                int channelMask = channels == 1
+                        ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
+                int minBuffer = AudioTrack.getMinBufferSize(
+                        sampleRate, channelMask, encoding);
+                int bufferSize = Math.max(8192, minBuffer > 0 ? minBuffer * 2 : 16384);
+
+                track = new AudioTrack.Builder()
+                        .setAudioAttributes(new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                .build())
+                        .setAudioFormat(new AudioFormat.Builder()
+                                .setEncoding(encoding)
+                                .setSampleRate(sampleRate)
+                                .setChannelMask(channelMask)
+                                .build())
+                        .setBufferSizeInBytes(bufferSize)
+                        .setTransferMode(AudioTrack.MODE_STREAM)
+                        .build();
+
+                if (track.getState() != AudioTrack.STATE_INITIALIZED) {
+                    throw new IllegalStateException("Output audio tidak dapat diinisialisasi");
                 }
-            }
-        } catch (Exception error) {
-            if (running) {
-                audioStatus = "Audio tidak tersedia";
+                track.play();
+                audioStatus = "Audio: terhubung";
                 updateStatus();
-                android.util.Log.w("OfflineMirror", "Viewer audio failed", error);
+
+                while (running && !socket.isClosed()) {
+                    int count = input.readInt();
+                    if (count <= 0 || count > 65536 || (count & 1) != 0) {
+                        throw new IllegalStateException("Paket audio tidak valid");
+                    }
+                    byte[] pcm = new byte[count];
+                    input.readFully(pcm);
+                    int offset = 0;
+                    while (offset < count && running) {
+                        int written;
+                        if (Build.VERSION.SDK_INT >= 23) {
+                            written = track.write(pcm, offset, count - offset,
+                                    AudioTrack.WRITE_BLOCKING);
+                        } else {
+                            written = track.write(pcm, offset, count - offset);
+                        }
+                        if (written < 0) {
+                            throw new IllegalStateException("Output audio terhenti");
+                        }
+                        if (written == 0) {
+                            try { Thread.sleep(2L); }
+                            catch (InterruptedException interrupted) {
+                                Thread.currentThread().interrupt();
+                                return;
+                            }
+                        } else {
+                            offset += written;
+                        }
+                    }
+                }
+            } catch (Exception error) {
+                if (running) {
+                    audioStatus = "Audio terputus • mencoba ulang";
+                    updateStatus();
+                    android.util.Log.w("OfflineMirror", "Viewer audio retry", error);
+                }
+            } finally {
+                if (track != null) {
+                    try { track.pause(); } catch (Exception ignored) {}
+                    try { track.flush(); } catch (Exception ignored) {}
+                    try { track.release(); } catch (Exception ignored) {}
+                }
+                try { if (input != null) input.close(); } catch (Exception ignored) {}
+                try { socket.close(); } catch (Exception ignored) {}
+                if (audioSocket == socket) audioSocket = null;
             }
-        } finally {
-            if (track != null) {
-                try { track.pause(); } catch (Exception ignored) {}
-                try { track.flush(); } catch (Exception ignored) {}
-                try { track.release(); } catch (Exception ignored) {}
+            if (running) {
+                try { Thread.sleep(1200L); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             }
-            try { if (input != null) input.close(); } catch (Exception ignored) {}
-            try { if (audioSocket != null) audioSocket.close(); } catch (Exception ignored) {}
         }
+        audioStatus = "Audio: berhenti";
+        updateStatus();
     }
 
     private StreamConfig readStreamHeader(DataInputStream input) throws Exception {
