@@ -1,4 +1,4 @@
-# OfflineMirror 1.50.0
+# OfflineMirror 1.51.0
 
 OfflineMirror streams an Android screen to another Android phone over a shared private Wi-Fi network or hotspot. Internet access is not required.
 
@@ -24,20 +24,18 @@ The QR code contains the Host's private-network address, video port and a random
 
 ## Bluetooth HID input
 
-The Viewer phone acts as the Bluetooth HID peripheral. Tap **PAIR BT** in Viewer, then pair the advertised OfflineMirror device from the Host phone's Android Bluetooth settings. Keep Viewer open while using Bluetooth input.
+The Viewer phone acts as one Bluetooth HID peripheral at a time. Select the desired mode from the **MODE** control:
 
-Bluetooth registers one **composite HID profile** containing two independent top-level collections with separate Report IDs:
+- **Gamepad HID** registers a standard gamepad descriptor with 16 digital buttons and four 8-bit axes for the two analog sticks.
+- **Touch HID** registers a separate digitizer/touchscreen descriptor and sends absolute screen coordinates.
 
-- **Gamepad (Report ID 1)**: 16 digital button usages and four 8-bit axes (X, Y, Z and Rz) for two analog sticks. D-pad directions are digital buttons.
-- **Touchscreen (Report ID 2)**: experimental absolute-coordinate touchscreen input with one contact.
+These are independent Bluetooth HID registrations, not a composite device. Switching modes stops and unregisters the active HID application before registering the other descriptor. The Host may require the old OfflineMirror Bluetooth pairing to be removed and the newly advertised mode to be paired again. Keep Viewer open while pairing.
 
-Both report channels remain enabled simultaneously; the Viewer can show the gamepad overlay while touch gestures on unoccupied screen areas continue to be sent through the touchscreen collection. The gamepad overlay can be hidden without unregistering either HID collection. Some Android Bluetooth HID Host implementations or vendor firmware may ignore/reject the touchscreen collection. If moving from an older build, remove the old OfflineMirror Bluetooth pairing on the Host and pair the updated composite device again.
+Gamepad input is sent on button edges immediately and analog updates are coalesced on a dedicated high-priority worker. The virtual stick uses a 4% deadzone with no artificial button hold delay. Physical-controller feel still depends on the Host Bluetooth stack, report scheduling, and the game. L2/R2 are digital buttons in this build; analog trigger axes are not exposed.
 
-This build does not expose separate Consumer Control reports for Home, Back or Recent Apps, and does not expose analog trigger axes. Controller compatibility still depends on the Android Host and the target game.
+Touch HID currently supports one absolute contact. Multi-touch is not advertised by this descriptor. Touchscreen HID support varies substantially by Android version and vendor firmware; some phones accept the pairing but do not route digitizer reports into ordinary touch input.
 
-The HUD editor lets the Viewer reposition individual gamepad controls. Positions, sensitivity and layout settings are stored locally. Focus loss and activity shutdown release active gamepad/touch states.
-
-No root or Accessibility service is used by the Bluetooth HID input path.
+The HUD editor lets the Viewer reposition individual gamepad controls. Positions, sensitivity and layout settings are stored locally. Focus loss and activity shutdown release active gamepad/touch states. No root or Accessibility service is used by the Bluetooth HID input path.
 
 ## Compatibility and limitations
 
