@@ -620,7 +620,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         if (touchOverlay != null) touchOverlay.cancelTouches();
 
         gamepadInputMode = useGamepad;
-        selectedHidMode = useGamepad ? BluetoothHidGamepad.InputMode.GAMEPAD : BluetoothHidGamepad.InputMode.TOUCH;
+        if (selectedHidMode != BluetoothHidGamepad.InputMode.COMPOSITE)
+            selectedHidMode = useGamepad ? BluetoothHidGamepad.InputMode.GAMEPAD : BluetoothHidGamepad.InputMode.TOUCH;
         if (touchOverlay != null) touchOverlay.setVisibility(View.VISIBLE);
         if (gamepadOverlay != null) {
             gamepadOverlay.setVisibility(useGamepad ? View.VISIBLE : View.GONE);
@@ -773,12 +774,13 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     }
 
     private void showBluetoothDevicePicker() {
-        final String[] modes = {"Gamepad HID • analog + tombol", "Touch HID • sentuhan + swipe"};
-        new AlertDialog.Builder(this).setTitle("Pilih mode Bluetooth terpisah")
+        final String[] modes = {"Gamepad HID • analog + tombol", "Touch HID • sentuhan + swipe", "Dual HID Composite • keduanya bersamaan"};
+        new AlertDialog.Builder(this).setTitle("Pilih profil Bluetooth HID")
                 .setItems(modes, (dialog, which) -> {
                     selectedHidMode = which == 0 ? BluetoothHidGamepad.InputMode.GAMEPAD
-                            : BluetoothHidGamepad.InputMode.TOUCH;
-                    setInputMode(selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD, "Mode Bluetooth");
+                            : which == 1 ? BluetoothHidGamepad.InputMode.TOUCH
+                            : BluetoothHidGamepad.InputMode.COMPOSITE;
+                    setInputMode(selectedHidMode != BluetoothHidGamepad.InputMode.TOUCH, "Mode Bluetooth");
                     showBluetoothDevicePickerForMode();
                 }).setNegativeButton("Batal", null).show();
     }
