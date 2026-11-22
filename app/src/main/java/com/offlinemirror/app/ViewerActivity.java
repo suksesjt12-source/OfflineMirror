@@ -225,7 +225,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         root.addView(videoFrame, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Wi-Fi carries mirroring; Bluetooth registers one independent HID profile at a time.
+        // Wi-Fi carries mirroring; Bluetooth supports separate HID profiles or one composite profile.
         FrameLayout.LayoutParams gamepadBarParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(44), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         gamepadBarParams.topMargin = dp(48);
@@ -614,6 +614,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
     private void setInputMode(boolean useGamepad, String source) {
         if (!controlEnabled) return;
+        if (selectedHidMode == BluetoothHidGamepad.InputMode.COMPOSITE) useGamepad = true;
         if (gamepadInputMode == useGamepad && overlayToggleButton != null) return;
 
         if (!useGamepad && gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
@@ -627,9 +628,12 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             gamepadOverlay.setVisibility(useGamepad ? View.VISIBLE : View.GONE);
         }
         if (overlayToggleButton != null) {
-            overlayToggleButton.setText(useGamepad ? "MODE: GAMEPAD" : "MODE: TOUCH HID");
+            overlayToggleButton.setText(selectedHidMode == BluetoothHidGamepad.InputMode.COMPOSITE
+                    ? "MODE: DUAL HID" : useGamepad ? "MODE: GAMEPAD" : "MODE: TOUCH HID");
         }
-        controlStatus = source + ": " + (useGamepad ? "Gamepad HID" : "Touch HID") + " dipilih; profil Bluetooth didaftarkan terpisah.";
+        controlStatus = source + ": " + (selectedHidMode == BluetoothHidGamepad.InputMode.COMPOSITE
+                ? "Dual HID Composite • Gamepad + Touch bersamaan"
+                : useGamepad ? "Gamepad HID" : "Touch HID") + " dipilih.";
         updateStatus();
     }
 
