@@ -553,7 +553,14 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     private byte[] buildGamepadReport(
             int buttons, float lx, float ly, float rx, float ry) {
         byte[] report = new byte[7];
-        int mask = buttons & 0xFFFF;
+        // D-pad is encoded only in the HID hat-switch field below. Keeping its
+        // overlay bits out of the button bitmap avoids duplicate/non-standard
+        // directional buttons on Android hosts that expose both usages.
+        int dpadMask = GamepadOverlayView.BUTTON_DPAD_UP
+                | GamepadOverlayView.BUTTON_DPAD_DOWN
+                | GamepadOverlayView.BUTTON_DPAD_LEFT
+                | GamepadOverlayView.BUTTON_DPAD_RIGHT;
+        int mask = buttons & 0xFFFF & ~dpadMask;
         report[0] = (byte) (mask & 0xFF);
         report[1] = (byte) ((mask >>> 8) & 0xFF);
 
