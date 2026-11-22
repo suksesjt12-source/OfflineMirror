@@ -25,15 +25,18 @@ public final class BluetoothHidGamepad {
     private static final int GAMEPAD_REPORT_ID = 1;
     private static final int TOUCH_REPORT_ID = 2;
 
-// Gamepad and touchscreen are exposed in one composite HID application.
-// Each top-level collection has a distinct Report ID, so both channels can
-// send input concurrently without unregistering or replacing the descriptor.
+// Standard gamepad application collection: 16 buttons, a real 4-bit hat
+// switch (D-pad), and four 8-bit axes. Report ID 1 is always 8 bytes.
 private static final byte[] GAMEPAD_REPORT_DESCRIPTOR = new byte[] {
         0x05, 0x01, 0x09, 0x05, (byte) 0xA1, 0x01,
         (byte) 0x85, 0x01,
         0x05, 0x09, 0x19, 0x01, 0x29, 0x10,
         0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
         (byte) 0x95, 0x10, (byte) 0x81, 0x02,
+        0x05, 0x01, 0x09, 0x39,
+        0x15, 0x00, 0x25, 0x07, 0x35, 0x00, 0x46, 0x3B, 0x01,
+        0x65, 0x14, 0x75, 0x04, (byte) 0x95, 0x01, (byte) 0x81, 0x42,
+        0x75, 0x04, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
         0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x32, 0x09, 0x35,
         0x15, 0x00, 0x26, (byte) 0xFF, 0x00, 0x75, 0x08,
         (byte) 0x95, 0x04, (byte) 0x81, 0x02,
@@ -178,7 +181,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         registrationRequested = true;
         boolean gamepad = inputMode == InputMode.GAMEPAD;
         byte[] descriptor = gamepad ? GAMEPAD_REPORT_DESCRIPTOR : TOUCH_REPORT_DESCRIPTOR;
-        String deviceName = gamepad ? "OfflineMirror Gamepad" : "OfflineMirror Touch HID";
+        String deviceName = gamepad ? "Gamepad" : "Touch";
         String description = gamepad
                 ? "OfflineMirror Bluetooth Gamepad Controller"
                 : "OfflineMirror Bluetooth Touchscreen";
@@ -403,7 +406,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     public void switchProfile(BluetoothDevice newTarget, InputMode newMode) {
         InputMode requestedMode = newMode == null ? InputMode.GAMEPAD : newMode;
         boolean sameTarget = target == null ? newTarget == null
-                : newTarget.equals(newTarget);
+                : target.equals(newTarget);
         if (inputMode == requestedMode && sameTarget && isConnected()) return;
         BluetoothDevice previousTarget = target;
         if (connected && hidDevice != null && previousTarget != null) {
@@ -440,11 +443,11 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     }
 
     public String getActiveProfileName() {
-        return "Bluetooth HID " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID");
+        return "Bluetooth " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch");
     }
 
     public boolean isGamepadMode() {
-        return gamepadMode;
+        return inputMode == InputMode.GAMEPAD;
     }
 
     private void sendNeutralReport() {
@@ -499,21 +502,38 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
 
     private byte[] buildGamepadReport(
             int buttons, float lx, float ly, float rx, float ry) {
-        byte[] report = new byte[6];
+        byte[] report = new byte[8];
         int mask = buttons & 0xFFFF;
         report[0] = (byte) (mask & 0xFF);
         report[1] = (byte) ((mask >>> 8) & 0xFF);
-        report[2] = toAxis(lx); // X
-        report[3] = toAxis(ly); // Y
-        report[4] = toAxis(rx); // Z
-        report[5] = toAxis(ry); // Rz
+
+        // HID hat values: up, up-right, right, down-right, down,
+        // down-left, left, up-left; 8 means neutral/null.
+        boolean up = (buttons & GamepadOverlayView.BUTTON_DPAD_UP) != 0;
+        boolean down = (buttons & GamepadOverlayView.BUTTON_DPAD_DOWN) != 0;
+        boolean left = (buttons & GamepadOverlayView.BUTTON_DPAD_LEFT) != 0;
+        boolean right = (buttons & GamepadOverlayView.BUTTON_DPAD_RIGHT) != 0;
+        int hat = 8;
+        if (up && right && !down && !left) hat = 1;
+        else if (right && !up && !down && !left) hat = 2;
+        else if (down && right && !up && !left) hat = 3;
+        else if (down && !up && !left && !right) hat = 4;
+        else if (down && left && !up && !right) hat = 5;
+        else if (left && !up && !down && !right) hat = 6;
+        else if (up && left && !down && !right) hat = 7;
+        else if (up && !down && !left && !right) hat = 0;
+        report[2] = (byte) (hat & 0x0F);
+        report[3] = toAxis(lx); // X
+        report[4] = toAxis(ly); // Y
+        report[5] = toAxis(rx); // Z
+        report[6] = toAxis(ry); // Rz
+        report[7] = 0;
         return report;
     }
 
     private byte[] neutralReport() {
         return new byte[] {
-                0, 0,
-                (byte) 128, (byte) 128, (byte) 128, (byte) 128
+                0, 0, 8, (byte) 128, (byte) 128, (byte) 128, (byte) 128, 0
         };
     }
 
