@@ -502,7 +502,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
 
     private byte[] buildGamepadReport(
             int buttons, float lx, float ly, float rx, float ry) {
-        byte[] report = new byte[8];
+        byte[] report = new byte[7];
         int mask = buttons & 0xFFFF;
         report[0] = (byte) (mask & 0xFF);
         report[1] = (byte) ((mask >>> 8) & 0xFF);
@@ -527,13 +527,12 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         report[4] = toAxis(ly); // Y
         report[5] = toAxis(rx); // Z
         report[6] = toAxis(ry); // Rz
-        report[7] = 0;
         return report;
     }
 
     private byte[] neutralReport() {
         return new byte[] {
-                0, 0, 8, (byte) 128, (byte) 128, (byte) 128, (byte) 128, 0
+                0, 0, 8, (byte) 128, (byte) 128, (byte) 128, (byte) 128
         };
     }
 
