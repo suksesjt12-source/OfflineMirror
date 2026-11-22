@@ -110,9 +110,9 @@ public final class VirtualBluetoothAdapterManager {
                 : touchEnabled ? "Touch saja" : "Tidak aktif";
         return "VIRTUAL BLUETOOTH ADAPTER MANAGER\n"
                 + "Virtual Gamepad: " + (gamepadEnabled ? "AKTIF" : "NONAKTIF")
-                + " • input diteruskan: " + gamepadReports.get() + "\n"
+                + " • event dirutekan aplikasi: " + gamepadReports.get() + "\n"
                 + "Virtual Touch: " + (touchEnabled ? "AKTIF" : "NONAKTIF")
-                + " • input diteruskan: " + touchReports.get() + "\n"
+                + " • event dirutekan aplikasi: " + touchReports.get() + "\n"
                 + "Mode HID: " + mode + "\n"
                 + "Transport: satu adaptor Bluetooth fisik / satu koneksi HID bersama\n"
                 + "Status: " + transportStatus + "\n\n"
