@@ -778,7 +778,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
     }
 
     private void showBluetoothDevicePicker() {
-        final String[] modes = {"Gamepad HID • analog + tombol", "Touch HID • sentuhan + swipe", "Dual HID Composite • keduanya bersamaan"};
+        final String[] modes = {"Gamepad HID • analog + tombol", "Touch HID • sentuhan + swipe", "Dual HID Composite • Gamepad + Touchscreen dalam satu profil"};
         new AlertDialog.Builder(this).setTitle("Pilih profil Bluetooth HID")
                 .setItems(modes, (dialog, which) -> {
                     selectedHidMode = which == 0 ? BluetoothHidGamepad.InputMode.GAMEPAD
@@ -846,7 +846,7 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             labels[i + 1] = (name == null || name.isEmpty() ? "Bluetooth device" : name)
                     + " • " + device.getAddress();
         }
-        new AlertDialog.Builder(this).setTitle("Pilih HP Host untuk " + (selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD ? "Gamepad HID" : "Touch HID"))
+        new AlertDialog.Builder(this).setTitle("Pilih HP Host untuk " + (selectedHidMode == BluetoothHidGamepad.InputMode.COMPOSITE ? "Dual HID Composite" : selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD ? "Gamepad HID" : "Touch HID"))
                 .setItems(labels, (dialog, which) -> {
                     if (which == 0) startBluetoothGamepad(null);
                     else startBluetoothGamepad(devices.get(which - 1));
@@ -894,9 +894,12 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
     private void startBluetoothGamepad(BluetoothDevice device) {
         selectedHidDevice = device;
+        String profileName = selectedHidMode == BluetoothHidGamepad.InputMode.COMPOSITE
+                ? "Dual HID Composite" : selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD
+                ? "Gamepad HID" : "Touch HID";
         if (bluetoothGamepad != null) {
             bluetoothGamepad.switchProfile(device, selectedHidMode);
-            bluetoothStatus = "Mengganti ke Bluetooth " + (selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + "...";
+            bluetoothStatus = "Mengganti ke Bluetooth " + profileName + "...";
             if (gamepadStatus != null) gamepadStatus.setText(bluetoothStatus);
             if (device == null) requestBluetoothDiscoverable();
             updateStatus();
@@ -911,8 +914,8 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
             }
         }));
         bluetoothStatus = device == null
-                ? "Mendaftarkan Bluetooth HID " + (selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD ? "Gamepad..." : "Touch HID...")
-                : "Bluetooth " + (selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + " • Menyambungkan ke " + device.getAddress();
+                ? "Mendaftarkan Bluetooth HID " + profileName + "..."
+                : "Bluetooth " + profileName + " • Menyambungkan ke " + device.getAddress();
         if (gamepadStatus != null) gamepadStatus.setText(bluetoothStatus);
         if (bluetoothButton != null) bluetoothButton.setText("JARINGAN 2: CONNECTING");
         bluetoothGamepad.setInputMode(selectedHidMode == BluetoothHidGamepad.InputMode.GAMEPAD);
