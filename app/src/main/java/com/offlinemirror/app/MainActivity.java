@@ -18,6 +18,7 @@ import android.provider.Settings;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
+import android.view.InputDevice;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -229,6 +230,13 @@ public class MainActivity extends Activity {
             setStatus("Sharing dihentikan. Pairing key sebelumnya sudah tidak berlaku.");
         });
 
+        Button inputDiagnosticsButton = makeButton(
+                "SCAN INPUT BLUETOOTH", Color.rgb(43, 83, 132));
+        LinearLayout.LayoutParams inputDiagnosticsParams = matchWrap();
+        inputDiagnosticsParams.topMargin = dp(8);
+        page.addView(inputDiagnosticsButton, inputDiagnosticsParams);
+        inputDiagnosticsButton.setOnClickListener(v -> showInputDeviceDiagnostics());
+
         addDivider(page);
         addSectionTitle(page, "VIEWER MODE — CONNECT TO ANOTHER PHONE");
         addLabel(page, "Host IP address");
@@ -276,7 +284,7 @@ public class MainActivity extends Activity {
         page.addView(statusText, statusParams);
 
         TextView note = new TextView(this);
-        note.setText("QR berisi IP lokal, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung hingga 4 Viewer video. Bluetooth mendaftarkan satu profil pada satu waktu: Touch HID satu jari atau Gamepad, lalu mode diganti manual dari Viewer. Profil Gamepad menyediakan tombol digital dan dua stick analog; arah D-pad dipetakan sebagai tombol. Build ini belum menyediakan laporan tombol Home/Back/Recent Apps atau trigger analog. Touch HID bersifat eksperimental dan kompatibilitasnya bergantung pada firmware HP Host. Wi-Fi membawa video, audio opsional, serta perintah clipboard/volume/media. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
+        note.setText("QR berisi IP lokal, port, dan pairing key sesi Host. Gunakan Wi-Fi/hotspot yang sama; internet tidak diperlukan. Host mendukung hingga 4 Viewer video. Bluetooth HID menyediakan Gamepad, Touch, dan Dual HID Composite. Mode Composite menggabungkan koleksi Gamepad dan Touchscreen dalam satu profil Bluetooth; Android Host dapat menampilkannya sebagai satu atau beberapa perangkat input. Gunakan SCAN INPUT BLUETOOTH saat HID tersambung untuk memeriksa sumber input eksternal yang benar-benar dikenali Android. Touch HID masih eksperimental dan bergantung pada firmware Host. Fitur Gamepad/Touch HID tidak membutuhkan Accessibility. Wi-Fi membawa video, audio opsional, serta perintah clipboard/volume/media. Bluetooth HID memerlukan Android 9+ dan dukungan firmware; video memerlukan Android 5.0+ dan audio Android 10+.");
         note.setTextColor(Color.rgb(120, 137, 164));
         note.setTextSize(12);
         note.setLineSpacing(dp(3), 1f);
@@ -285,6 +293,80 @@ public class MainActivity extends Activity {
         page.addView(note, noteParams);
 
         setContentView(scroll);
+    }
+
+    /**
+     * Inspects Android's input-device registry without Accessibility or input injection.
+     * The built-in touchscreen is excluded so it cannot create a false Touch HID success.
+     */
+    private void showInputDeviceDiagnostics() {
+        StringBuilder report = new StringBuilder();
+        int externalGamepads = 0;
+        int externalTouchscreens = 0;
+        int compositeDevices = 0;
+        int[] deviceIds = InputDevice.getDeviceIds();
+
+        report.append("PEMERIKSAAN INPUT ANDROID\n");
+        report.append("Perangkat input terdaftar: ").append(deviceIds.length).append("\n\n");
+
+        for (int id : deviceIds) {
+            InputDevice device = InputDevice.getDevice(id);
+            if (device == null) continue;
+
+            boolean external = device.isExternal();
+            boolean gamepad = device.supportsSource(InputDevice.SOURCE_GAMEPAD)
+                    || device.supportsSource(InputDevice.SOURCE_JOYSTICK)
+                    || device.supportsSource(InputDevice.SOURCE_DPAD);
+            boolean touchscreen = device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN);
+
+            if (external && gamepad) externalGamepads++;
+            if (external && touchscreen) externalTouchscreens++;
+            if (external && gamepad && touchscreen) compositeDevices++;
+
+            report.append(external ? "[EKSTERNAL] " : "[INTERNAL] ")
+                    .append(device.getName()).append("\n")
+                    .append("  ID ").append(id)
+                    .append(" • Vendor ").append(device.getVendorId())
+                    .append(" • Product ").append(device.getProductId()).append("\n")
+                    .append("  Sumber: ");
+            boolean hasSource = false;
+            if (gamepad) {
+                report.append("Gamepad/Joystick");
+                hasSource = true;
+            }
+            if (touchscreen) {
+                if (hasSource) report.append(", ");
+                report.append("Touchscreen");
+                hasSource = true;
+            }
+            if (!hasSource) report.append("lainnya");
+            report.append("\n\n");
+        }
+
+        report.append("HASIL HID EKSTERNAL\n")
+                .append("Gamepad/Joystick: ").append(externalGamepads > 0 ? "TERDETEKSI" : "BELUM TERDETEKSI")
+                .append("\nTouchscreen: ").append(externalTouchscreens > 0 ? "TERDETEKSI" : "BELUM TERDETEKSI")
+                .append("\n");
+
+        if (externalGamepads > 0 && externalTouchscreens > 0) {
+            report.append(compositeDevices > 0
+                    ? "Keduanya terpapar pada satu InputDevice komposit."
+                    : "Keduanya dikenali sebagai perangkat input eksternal.");
+        } else if (externalGamepads > 0) {
+            report.append("Gamepad dikenali, tetapi Touch HID belum muncul sebagai touchscreen eksternal.");
+        } else if (externalTouchscreens > 0) {
+            report.append("Touchscreen eksternal dikenali, tetapi Gamepad belum terdeteksi.");
+        } else {
+            report.append("Android belum menampilkan Gamepad atau Touch HID eksternal. Pastikan Bluetooth HID tersambung, lalu scan ulang.");
+        }
+
+        report.append("\n\nCatatan: layar sentuh bawaan Host sengaja tidak dihitung. Hasil ini hanya membaca kemampuan yang diumumkan Android; tidak melakukan injeksi sentuhan dan tidak memerlukan Accessibility.");
+        new AlertDialog.Builder(this)
+                .setTitle("Diagnostik Input Bluetooth")
+                .setMessage(report.toString())
+                .setNeutralButton("Scan ulang", (dialog, which) -> showInputDeviceDiagnostics())
+                .setPositiveButton("Tutup", null)
+                .show();
     }
 
     private void startQrScanner() {
