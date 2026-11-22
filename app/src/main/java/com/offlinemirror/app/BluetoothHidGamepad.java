@@ -26,7 +26,7 @@ public final class BluetoothHidGamepad {
     private static final int TOUCH_REPORT_ID = 2;
 
 // Standard gamepad application collection: 16 buttons, a real 4-bit hat
-// switch (D-pad), and four 8-bit axes. Report ID 1 is always 8 bytes.
+// switch (D-pad), and four 8-bit axes. Report ID 1 is always 7 bytes.
 private static final byte[] GAMEPAD_REPORT_DESCRIPTOR = new byte[] {
         0x05, 0x01, 0x09, 0x05, (byte) 0xA1, 0x01,
         (byte) 0x85, 0x01,
