@@ -279,7 +279,10 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
 
         Button overlayToggle = new Button(this);
         overlayToggleButton = overlayToggle;
-        overlayToggle.setText("MODE: GAMEPAD");
+        overlayToggle.setText(selectedHidMode == BluetoothHidGamepad.InputMode.COMPOSITE
+                ? "MODE: DUAL HID"
+                : selectedHidMode == BluetoothHidGamepad.InputMode.TOUCH
+                ? "MODE: TOUCH HID" : "MODE: GAMEPAD");
         overlayToggle.setTextSize(10);
         FrameLayout.LayoutParams toggleParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(42), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
@@ -624,7 +627,19 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         else if (virtualGamepadEnabled) useGamepad = true;
         else if (virtualTouchEnabled) useGamepad = false;
         if (!virtualGamepadEnabled && !virtualTouchEnabled) return;
-        if (gamepadInputMode == useGamepad && overlayToggleButton != null) return;
+        if (gamepadInputMode == useGamepad && overlayToggleButton != null) {
+            if (touchOverlay != null) {
+                touchOverlay.setVisibility(virtualTouchEnabled ? View.VISIBLE : View.GONE);
+            }
+            if (gamepadOverlay != null) {
+                gamepadOverlay.setVisibility(virtualGamepadEnabled && useGamepad
+                        ? View.VISIBLE : View.GONE);
+            }
+            overlayToggleButton.setText(selectedHidMode == BluetoothHidGamepad.InputMode.COMPOSITE
+                    ? "MODE: DUAL HID"
+                    : useGamepad ? "MODE: GAMEPAD" : "MODE: TOUCH HID");
+            return;
+        }
 
         if (!useGamepad && gamepadOverlay != null) gamepadOverlay.releaseAllInputs();
         if (touchOverlay != null) touchOverlay.cancelTouches();
@@ -815,21 +830,19 @@ public class ViewerActivity extends Activity implements TextureView.SurfaceTextu
         new AlertDialog.Builder(this).setTitle("Virtual Bluetooth Adapter Manager")
                 .setView(panel)
                 .setPositiveButton("TERAPKAN & HUBUNGKAN", (dialog, which) -> {
-                    virtualGamepadEnabled = gamepadToggle.isChecked();
-                    virtualTouchEnabled = touchToggle.isChecked();
+                    boolean enableGamepad = gamepadToggle.isChecked();
+                    boolean enableTouch = touchToggle.isChecked();
+                    if (!enableGamepad && !enableTouch) {
+                        Toast.makeText(this, "Aktifkan minimal satu profil virtual.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    virtualGamepadEnabled = enableGamepad;
+                    virtualTouchEnabled = enableTouch;
                     getSharedPreferences("offline_mirror_settings", MODE_PRIVATE).edit()
                             .putBoolean("virtual_gamepad_enabled", virtualGamepadEnabled)
                             .putBoolean("virtual_touch_enabled", virtualTouchEnabled)
                             .apply();
                     selectedHidMode = resolveVirtualInputMode();
-                    if (selectedHidMode == null) {
-                        if (virtualBluetoothManager != null) {
-                            virtualBluetoothManager.configure(selectedHidDevice, false, false);
-                        }
-                        Toast.makeText(this, "Aktifkan minimal satu profil virtual.", Toast.LENGTH_LONG).show();
-                        updateStatus();
-                        return;
-                    }
                     setInputMode(selectedHidMode != BluetoothHidGamepad.InputMode.TOUCH,
                             "Virtual Adapter Manager");
                     showBluetoothDevicePickerForMode();
