@@ -229,7 +229,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         BluetoothHidDevice device = hidDevice;
         if (device == null) { status("Bluetooth HID belum siap"); return; }
         registrationRequested = true;
-        boolean gamepad = inputMode == InputMode.GAMEPAD;
+        boolean gamepad = inputMode == InputMode.GAMEPAD
+                || inputMode == InputMode.COMPOSITE;
         byte[] descriptor = inputMode == InputMode.COMPOSITE ? COMPOSITE_REPORT_DESCRIPTOR
                 : gamepad ? GAMEPAD_REPORT_DESCRIPTOR : TOUCH_REPORT_DESCRIPTOR;
         String deviceName = inputMode == InputMode.COMPOSITE ? "Mirror HID"
@@ -546,8 +547,11 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             if (!device.sendReport(receiver, reportId, report)) {
                 Log.w(TAG, "Bluetooth stack rejected HID report " + reportId);
                 if (reportId == GAMEPAD_REPORT_ID || reportId == TOUCH_REPORT_ID) {
-                    status("HP Host menolak laporan Bluetooth " +
-                            (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID"));
+                    String reportName = reportId == GAMEPAD_REPORT_ID ? "Gamepad" : "Touchscreen";
+                    String profileName = inputMode == InputMode.COMPOSITE
+                            ? "Dual HID Composite" : reportName;
+                    status("Bluetooth stack tidak menerima laporan " + reportName
+                            + " • profil " + profileName);
                 }
             }
         } catch (SecurityException denied) {
