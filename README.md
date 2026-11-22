@@ -1,4 +1,4 @@
-# OfflineMirror 1.55.0
+# OfflineMirror 1.56.0
 
 OfflineMirror streams an Android screen to another Android phone over a shared private Wi-Fi network or hotspot. Internet access is not required.
 
@@ -24,7 +24,7 @@ The QR code contains the Host's private-network address, video port and a random
 
 ## Bluetooth HID input
 
-The Viewer phone acts as one Bluetooth HID peripheral at a time. Select the desired mode from the Bluetooth mode selector. The Viewer can also switch the active HID registration automatically when the Host foreground app changes, if a per-app profile has been saved:
+The Viewer phone offers three Bluetooth HID modes: Gamepad, Touch, and Dual HID Composite. Gamepad and Touch are individual HID registrations. Dual HID Composite registers one Bluetooth peripheral with separate Gamepad and Digitizer top-level collections and Report IDs, allowing both report types over the same connection when the Host supports composite HID routing. This is not two separate Bluetooth radios or two independently pairable Bluetooth devices. The Viewer can also switch the active HID registration automatically when the Host foreground app changes, if a per-app profile has been saved:
 
 - **Gamepad HID** registers a standard gamepad descriptor with 16 digital buttons, a standard 4-way/8-way hat switch for D-pad, and four 8-bit axes for the two analog sticks. D-pad directions are represented by the hat switch only to avoid duplicate directional button signals.
 - **Touch HID** registers a separate digitizer/touchscreen descriptor and sends absolute screen coordinates.
