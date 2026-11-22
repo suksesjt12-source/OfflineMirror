@@ -1,4 +1,4 @@
-# OfflineMirror 1.53.0
+# OfflineMirror 1.55.0
 
 OfflineMirror streams an Android screen to another Android phone over a shared private Wi-Fi network or hotspot. Internet access is not required.
 
@@ -26,7 +26,7 @@ The QR code contains the Host's private-network address, video port and a random
 
 The Viewer phone acts as one Bluetooth HID peripheral at a time. Select the desired mode from the Bluetooth mode selector. The Viewer can also switch the active HID registration automatically when the Host foreground app changes, if a per-app profile has been saved:
 
-- **Gamepad HID** registers a standard gamepad descriptor with 16 digital buttons and four 8-bit axes for the two analog sticks.
+- **Gamepad HID** registers a standard gamepad descriptor with 16 digital buttons, a standard 4-way/8-way hat switch for D-pad, and four 8-bit axes for the two analog sticks. D-pad directions are represented by the hat switch only to avoid duplicate directional button signals.
 - **Touch HID** registers a separate digitizer/touchscreen descriptor and sends absolute screen coordinates.
 
 These are independent Bluetooth HID registrations, not a composite device. Switching modes stops and unregisters the active HID application before registering the other descriptor. The Bluetooth bond normally remains stored, but the HID connection can briefly disconnect and reconnect while the profile changes.
@@ -48,6 +48,8 @@ The HUD editor lets the Viewer reposition individual gamepad controls. Positions
 - Wi-Fi video and Bluetooth input are independent transports. Wi-Fi carries the stream, utilities and foreground-app events; Bluetooth carries one active HID profile at a time.
 
 ## Troubleshooting
+
+- **Bluetooth pairs but gamepad input does nothing**: pairing alone does not confirm the Host routed HID input. Reconnect the Gamepad profile, keep the Viewer gamepad overlay visible, test buttons and sticks in a Host game or controller test screen, and check whether the Host Bluetooth settings identify it as an input/controller device. If it is listed only as a paired phone or audio device, that Host/vendor stack may not accept HID Device reports. OfflineMirror cannot force unsupported firmware to route input.
 
 - **QR scanner does not open**: grant camera permission and close other apps currently using the camera.
 - **Viewer cannot connect**: confirm both phones are on the same Wi-Fi/hotspot, use the Host's current IP, and create a new QR after restarting sharing.
