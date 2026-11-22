@@ -1,4 +1,4 @@
-# OfflineMirror 1.57.0
+# OfflineMirror 1.58.0
 
 OfflineMirror streams an Android screen to another Android phone over a shared private Wi-Fi network or hotspot. Internet access is not required.
 
@@ -24,10 +24,10 @@ The QR code contains the Host's private-network address, video port and a random
 
 ## Bluetooth HID input
 
-The Viewer phone offers three Bluetooth HID modes: Gamepad, Touch, and Dual HID Composite. Gamepad and Touch are individual HID registrations. Dual HID Composite registers one Bluetooth peripheral with separate Gamepad and Digitizer top-level collections and Report IDs, allowing both report types over the same connection when the Host supports composite HID routing. This is not two separate Bluetooth radios or two independently pairable Bluetooth devices. The Viewer can also switch the active HID registration automatically when the Host foreground app changes, if a per-app profile has been saved:
+The Viewer phone includes a **Virtual Bluetooth Adapter Manager** with two independently switchable logical endpoints: Virtual Gamepad and Virtual Touch. Enabling both registers one Bluetooth HID composite peripheral with separate Gamepad and Digitizer top-level collections and Report IDs. Enabling only one selects its standalone HID descriptor. Both endpoints share one physical Android Bluetooth adapter and one HID connection; the app-level virtual profiles are not two system Bluetooth adapters or two independently pairable devices. The Host may expose both collections as one composite InputDevice or as multiple InputDevices, depending on its Android input stack. The Viewer can also switch the active overlay automatically when the Host foreground app changes, if a per-app profile has been saved. The Virtual Bluetooth Adapter Manager keeps the enabled logical endpoints selected; an app profile does not silently disable either endpoint:
 
-- **Gamepad HID** registers a standard gamepad descriptor with 16 digital buttons, a standard 4-way/8-way hat switch for D-pad, and four 8-bit axes for the two analog sticks. D-pad directions are represented by the hat switch only to avoid duplicate directional button signals.
-- **Touch HID** registers a separate digitizer/touchscreen descriptor and sends absolute screen coordinates.
+- **Virtual Gamepad** routes 16 digital buttons, a standard 4-way/8-way hat switch for D-pad, and four 8-bit axes for the two analog sticks. D-pad directions are represented by the hat switch only to avoid duplicate directional button signals.
+- **Virtual Touch** routes single-contact absolute digitizer coordinates. It can be enabled or disabled independently from Virtual Gamepad.
 
 Gamepad-only and Touch-only are independent registrations. Dual HID Composite is one Bluetooth HID peripheral containing separate Gamepad and Digitizer top-level collections with separate Report IDs. Android may expose both collections as one InputDevice with two sources or as multiple InputDevices; behavior depends on the Host input stack. Switching between Gamepad, Touch and Composite stops and unregisters the active HID application before registering the selected descriptor. The Bluetooth bond normally remains stored, but the HID connection can briefly disconnect and reconnect while the profile changes.
 
@@ -35,9 +35,11 @@ Gamepad input is sent on button edges immediately and analog updates are coalesc
 
 Touch HID currently supports one absolute contact. Multi-touch is not advertised by this descriptor. Touchscreen HID support varies substantially by Android version and vendor firmware; some phones accept the pairing but do not route digitizer reports into ordinary touch input. In Host mode, **SCAN INPUT BLUETOOTH** reads Android's external InputDevice registry and reports whether external Gamepad/Joystick and Touchscreen sources are visible. It excludes the Host's built-in touchscreen to avoid a false positive. This check does not inject input and does not request Accessibility.
 
+**Virtual Bluetooth Adapter Manager:** open Viewer → BLUETOOTH and independently enable Virtual Gamepad and Virtual Touch. When both are enabled, one composite HID registration carries both report IDs. The manager reports whether each logical endpoint is enabled and counts reports routed by the app; these counters do not prove Android Host accepted the corresponding input sources. Run SCAN INPUT BLUETOOTH on the Host to inspect the external Gamepad/Joystick and Touchscreen sources.
+
 **Smart App Profiles:** enable Usage Access for OfflineMirror on the Host phone when starting Host mode. The Host sends the foreground app package name over the authenticated local control channel; it does not send screen contents. In Viewer → control settings, save Gamepad HID or Touch HID for the currently active Host app. When that app becomes foreground again, Viewer switches the overlay and HID registration. Apps without a saved profile leave the current mode unchanged. Usage Access must be granted manually in Android Settings; first-time Bluetooth pairing still requires Android's normal user confirmation. Vendor task managers and usage-access restrictions may delay or suppress app-change events.
 
-The HUD editor lets the Viewer reposition individual gamepad controls. Positions, sensitivity, deadzone, response curve and layout settings are stored locally. Focus loss and activity shutdown release active gamepad/touch states. No root or Accessibility service is used by the Bluetooth HID input path.
+The HUD editor lets the Viewer reposition individual gamepad controls. Positions, sensitivity, deadzone, response curve, virtual endpoint enablement and layout settings are stored locally. Focus loss and activity shutdown release active gamepad/touch states. No root or Accessibility service is used by the Bluetooth HID input path. The Viewer status panel reports app-side routing counts; only the Host input scan can confirm which sources Android actually exposes.
 
 ## Compatibility and limitations
 
@@ -46,7 +48,7 @@ The HUD editor lets the Viewer reposition individual gamepad controls. Positions
 - Playback audio capture: Android 10+ (API 29+) and capture-compatible apps.
 - Touch HID is experimental and is not guaranteed to work on every Host phone. Composite registration does not force an unsupported Host firmware to route digitizer input.
 - The Host input diagnostic only reports what Android exposes; seeing a Touchscreen source is a compatibility signal, not a guarantee that every app/game accepts the input.
-- Wi-Fi video and Bluetooth input are independent transports. Wi-Fi carries the stream, utilities and foreground-app events; Bluetooth carries one Gamepad profile, Touch profile or Composite profile at a time.
+- Wi-Fi video and Bluetooth input are independent transports. Wi-Fi carries the stream, utilities and foreground-app events; Bluetooth uses one physical HID transport carrying either the Gamepad endpoint, Touch endpoint, or both as a composite descriptor.
 
 ## Troubleshooting
 
