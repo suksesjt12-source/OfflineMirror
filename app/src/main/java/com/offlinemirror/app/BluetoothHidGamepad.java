@@ -158,7 +158,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             if (!requested) {
                 status("Bluetooth HID Device tidak didukung firmware HP ini");
             } else {
-                status("Mendaftarkan Bluetooth HID " + (inputMode == InputMode.GAMEPAD ? "Gamepad..." : "Touch HID..."));
+                status("Mendaftarkan Bluetooth HID " + (inputMode == InputMode.COMPOSITE ? "Dual Composite..." : inputMode == InputMode.GAMEPAD ? "Gamepad..." : "Touch HID..."));
             }
         } catch (SecurityException denied) {
             status("Izin Bluetooth tidak diberikan");
@@ -243,8 +243,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 deviceName, description, "OfflineMirror", subclass, descriptor);
         boolean ok = device.registerApp(sdp, null, null, context.getMainExecutor(), callback);
         if (!ok) registrationRequested = false;
-        status(ok ? "Bluetooth " + (gamepad ? "Gamepad" : "Touch HID") + " didaftarkan"
-                  : "Pendaftaran Bluetooth " + (gamepad ? "Gamepad" : "Touch HID") + " gagal");
+        status(ok ? "Bluetooth " + (inputMode == InputMode.COMPOSITE ? "Dual HID Composite" : gamepad ? "Gamepad" : "Touch HID") + " didaftarkan"
+                  : "Pendaftaran Bluetooth " + (inputMode == InputMode.COMPOSITE ? "Dual HID Composite" : gamepad ? "Gamepad" : "Touch HID") + " gagal");
     }
 
     private final BluetoothProfile.ServiceListener profileListener =
@@ -302,9 +302,9 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 return;
             }
             if (target == null) {
-                status("Pair OfflineMirror " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + " dari HP Host");
+                status("Pair OfflineMirror " + (inputMode == InputMode.COMPOSITE ? "Dual HID Composite" : inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + " dari HP Host");
             } else {
-                status("Menyambungkan OfflineMirror " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + "...");
+                status("Menyambungkan OfflineMirror " + (inputMode == InputMode.COMPOSITE ? "Dual HID Composite" : inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + "...");
                 try {
                     if (hidDevice != null && !hidDevice.connect(target))
                         status("Koneksi ditolak • periksa pairing Bluetooth Host");
@@ -320,7 +320,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             if (connected) {
                 target = device;
                 resetQueuedState();
-                status("Bluetooth " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + " aktif dan siap");
+                status("Bluetooth " + (inputMode == InputMode.COMPOSITE ? "Dual HID Composite" : inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID") + " aktif dan siap");
                 sendNeutralReport();
             } else if (state == BluetoothProfile.STATE_CONNECTING) {
                 status("Bluetooth HID sedang menyambungkan...");
@@ -330,7 +330,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                     reconnectHandler.removeCallbacks(reconnectTask);
                     reconnectHandler.postDelayed(reconnectTask, 1200L);
                 }
-                status("Bluetooth " + (inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID")
+                status("Bluetooth " + (inputMode == InputMode.COMPOSITE ? "Dual HID Composite" : inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch HID")
                         + " terputus; sambungkan ulang dari Viewer");
             }
         }
@@ -464,9 +464,9 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         BluetoothDevice previousTarget = target;
         if (connected && hidDevice != null && previousTarget != null) {
             try {
-                if (inputMode == InputMode.GAMEPAD)
+                if (inputMode == InputMode.GAMEPAD || inputMode == InputMode.COMPOSITE)
                     hidDevice.sendReport(previousTarget, GAMEPAD_REPORT_ID, neutralReport());
-                else
+                if (inputMode == InputMode.TOUCH || inputMode == InputMode.COMPOSITE)
                     hidDevice.sendReport(previousTarget, TOUCH_REPORT_ID, neutralTouchReport());
             } catch (Exception ignored) {}
         }
