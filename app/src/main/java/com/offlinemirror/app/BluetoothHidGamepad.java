@@ -103,6 +103,8 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     private volatile boolean registeredProfileGamepad = false;
     private volatile InputMode inputMode = InputMode.GAMEPAD;
     private volatile boolean stopping;
+    private String originalAdapterName;
+    private boolean adapterNameCaptured;
     private final Handler reconnectHandler = new Handler(android.os.Looper.getMainLooper());
     private final Runnable reconnectTask = () -> {
         BluetoothHidDevice device = hidDevice;
@@ -149,6 +151,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 status("Bluetooth belum aktif");
                 return;
             }
+            updateBluetoothDeviceName();
             ensureReportWorker();
             boolean requested = adapter.getProfileProxy(
                     context, profileListener, BluetoothProfile.HID_DEVICE);
@@ -162,6 +165,52 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         } catch (Exception error) {
             status("Bluetooth HID gagal dibuka: " + error.getMessage());
             Log.e(TAG, "Could not open HID profile", error);
+        }
+    }
+
+    /**
+     * The Android Bluetooth adapter has one global advertised name. Change it
+     * to the active HID profile while OfflineMirror is running, then restore
+     * the user's original phone name when the HID service stops.
+     */
+    private void updateBluetoothDeviceName() {
+        try {
+            android.bluetooth.BluetoothAdapter adapter =
+                    android.bluetooth.BluetoothAdapter.getDefaultAdapter();
+            if (adapter == null || !adapter.isEnabled()) return;
+            if (!adapterNameCaptured) {
+                originalAdapterName = adapter.getName();
+                adapterNameCaptured = true;
+            }
+            String desired = inputMode == InputMode.GAMEPAD ? "Gamepad" : "Touch";
+            String current = adapter.getName();
+            if (!desired.equals(current)) {
+                if (!adapter.setName(desired)) {
+                    status("Nama Bluetooth profil tidak dapat diubah oleh firmware");
+                }
+            }
+        } catch (SecurityException denied) {
+            status("Izin Bluetooth Connect diperlukan untuk mengganti nama profil");
+        } catch (Exception error) {
+            Log.w(TAG, "Could not update Bluetooth adapter name", error);
+        }
+    }
+
+    private void restoreBluetoothDeviceName() {
+        if (!adapterNameCaptured) return;
+        try {
+            android.bluetooth.BluetoothAdapter adapter =
+                    android.bluetooth.BluetoothAdapter.getDefaultAdapter();
+            if (adapter != null && adapter.isEnabled()
+                    && originalAdapterName != null
+                    && !originalAdapterName.equals(adapter.getName())) {
+                adapter.setName(originalAdapterName);
+            }
+        } catch (Exception error) {
+            Log.w(TAG, "Could not restore original Bluetooth adapter name", error);
+        } finally {
+            originalAdapterName = null;
+            adapterNameCaptured = false;
         }
     }
 
@@ -419,6 +468,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         }
         target = newTarget;
         inputMode = requestedMode;
+        updateBluetoothDeviceName();
         resetQueuedState();
         if (hidDevice == null) {
             start(newTarget, requestedMode);
@@ -581,6 +631,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         } catch (Exception error) {
             Log.w(TAG, "Error stopping HID controller", error);
         } finally {
+            restoreBluetoothDeviceName();
             connected = false;
             registered = false;
             registrationRequested = false;
