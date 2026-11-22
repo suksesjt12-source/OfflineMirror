@@ -43,32 +43,50 @@ private static final byte[] GAMEPAD_REPORT_DESCRIPTOR = new byte[] {
         (byte) 0xC0,
 };
 
-// Experimental single-contact Touchscreen descriptor.
-private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
-        // Experimental HID Digitizer Touch Screen: one absolute contact (Report ID 2).
-        0x05, 0x0D, 0x09, 0x04, (byte) 0xA1, 0x01,
-        (byte) 0x85, 0x02,
-        0x09, 0x22, (byte) 0xA1, 0x02,
-        0x09, 0x42, 0x09, 0x32, 0x09, 0x47,
-        0x15, 0x00, 0x25, 0x01,
-        0x75, 0x01, (byte) 0x95, 0x03, (byte) 0x81, 0x02,
-        0x75, 0x05, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
-        0x09, 0x51, 0x15, 0x00, 0x26, (byte) 0xFF, 0x00,
-        0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
-        0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
-        0x16, 0x00, 0x00, 0x26, (byte) 0xFF, 0x7F,
-        0x36, 0x00, 0x00, 0x46, (byte) 0xFF, 0x7F,
-        0x55, 0x00, 0x65, 0x00,
-        0x75, 0x10, (byte) 0x95, 0x02, (byte) 0x81, 0x02,
-        (byte) 0xC0,
-        0x05, 0x0D, 0x09, 0x54,
-        0x15, 0x00, 0x25, 0x01,
-        0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
-        // Contact Count Maximum feature report required by standard digitizers.
-        0x09, 0x55, 0x15, 0x01, 0x25, 0x01,
-        0x75, 0x08, (byte) 0x95, 0x01, (byte) 0xB1, 0x02,
-        (byte) 0xC0
+// Five-contact HID Digitizer Touch Screen descriptor (Report ID 2).
+    private static final byte[] TOUCH_REPORT_HEADER = new byte[] {
+            0x05, 0x0D, 0x09, 0x04, (byte) 0xA1, 0x01, (byte) 0x85, 0x02
     };
+    private static final byte[] TOUCH_FINGER_COLLECTION = new byte[] {
+            0x09, 0x22, (byte) 0xA1, 0x02,
+            0x09, 0x42, 0x09, 0x32, 0x09, 0x47,
+            0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
+            (byte) 0x95, 0x03, (byte) 0x81, 0x02,
+            0x75, 0x05, (byte) 0x95, 0x01, (byte) 0x81, 0x03,
+            0x09, 0x51, 0x15, 0x00, 0x26, (byte) 0xFF, 0x00,
+            0x75, 0x08, (byte) 0x95, 0x01, (byte) 0x81, 0x02,
+            0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
+            0x16, 0x00, 0x00, 0x26, (byte) 0xFF, 0x7F,
+            0x36, 0x00, 0x00, 0x46, (byte) 0xFF, 0x7F,
+            0x55, 0x00, 0x65, 0x00,
+            0x75, 0x10, (byte) 0x95, 0x02, (byte) 0x81, 0x02,
+            (byte) 0xC0
+    };
+    private static final byte[] TOUCH_REPORT_FOOTER = new byte[] {
+            0x05, 0x0D, 0x09, 0x54,
+            0x15, 0x00, 0x25, 0x05, 0x75, 0x08,
+            (byte) 0x95, 0x01, (byte) 0x81, 0x02,
+            0x09, 0x55, 0x15, 0x01, 0x25, 0x05,
+            0x75, 0x08, (byte) 0x95, 0x01, (byte) 0xB1, 0x02,
+            (byte) 0xC0
+    };
+    private static byte[] createTouchReportDescriptor() {
+        byte[] result = new byte[TOUCH_REPORT_HEADER.length
+                + TOUCH_FINGER_COLLECTION.length * 5 + TOUCH_REPORT_FOOTER.length];
+        int offset = 0;
+        System.arraycopy(TOUCH_REPORT_HEADER, 0, result, offset,
+                TOUCH_REPORT_HEADER.length);
+        offset += TOUCH_REPORT_HEADER.length;
+        for (int i = 0; i < 5; i++) {
+            System.arraycopy(TOUCH_FINGER_COLLECTION, 0, result, offset,
+                    TOUCH_FINGER_COLLECTION.length);
+            offset += TOUCH_FINGER_COLLECTION.length;
+        }
+        System.arraycopy(TOUCH_REPORT_FOOTER, 0, result, offset,
+                TOUCH_REPORT_FOOTER.length);
+        return result;
+    }
+    private static final byte[] TOUCH_REPORT_DESCRIPTOR = createTouchReportDescriptor();
 
     private static final byte[] COMPOSITE_REPORT_DESCRIPTOR =
             combineDescriptors(GAMEPAD_REPORT_DESCRIPTOR, TOUCH_REPORT_DESCRIPTOR);
@@ -94,7 +112,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
     private byte[] pendingGamepadReport;
     private byte[] pendingTouchReport;
     private int lastQueuedButtons = -1;
-    private boolean lastQueuedTouchPressed;
+    private int lastQueuedTouchSignature = -1;
     private boolean touchReportQueued;
     private boolean gamepadReportQueued;
     private volatile boolean gamepadMode = false;
@@ -349,7 +367,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                         }
                     } else if (type == BluetoothHidDevice.REPORT_TYPE_FEATURE
                             && id == TOUCH_REPORT_ID) {
-                        hidDevice.replyReport(device, type, id, new byte[] { 1 });
+                        hidDevice.replyReport(device, type, id, new byte[] { 5 });
                     }
                 } catch (SecurityException ignored) {
                     // The profile can disconnect while the host requests a report.
@@ -393,19 +411,22 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
         }
     }
 
-    /** Experimental single-contact absolute HID touchscreen input. */
+    /** Five-contact absolute HID touchscreen input. */
     public void sendTouchContacts(int[] contactIds, float[] xs, float[] ys) {
         if ((inputMode != InputMode.TOUCH && inputMode != InputMode.COMPOSITE) || !connected || reportHandler == null) return;
 
-        boolean pressed = contactIds != null && contactIds.length > 0
-                && xs != null && xs.length > 0 && ys != null && ys.length > 0;
-        float x = pressed ? xs[0] : 0f;
-        float y = pressed ? ys[0] : 0f;
-        byte[] report = buildTouchReport(pressed, x, y);
+        int count = Math.min(5, Math.min(contactIds == null ? 0 : contactIds.length,
+                Math.min(xs == null ? 0 : xs.length, ys == null ? 0 : ys.length)));
+        int signature = 0;
+        for (int i = 0; i < count; i++) {
+            int id = contactIds[i];
+            if (id >= 0 && id < 31) signature |= (1 << id);
+        }
+        byte[] report = buildTouchReport(contactIds, xs, ys, count);
 
         synchronized (reportLock) {
-            boolean edge = pressed != lastQueuedTouchPressed;
-            lastQueuedTouchPressed = pressed;
+            boolean edge = signature != lastQueuedTouchSignature;
+            lastQueuedTouchSignature = signature;
             if (edge) {
                 // Preserve press/release edges: no debounce timer.
                 pendingTouchReport = null;
@@ -429,16 +450,21 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 pressed ? new float[]{y} : new float[0]);
     }
 
-    private byte[] buildTouchReport(boolean pressed, float x, float y) {
-        int px = toTouchCoordinate(x);
-        int py = toTouchCoordinate(y);
-        return new byte[] {
-                (byte) (pressed ? 0x07 : 0x00),
-                1,
-                (byte) (px & 0xFF), (byte) ((px >>> 8) & 0xFF),
-                (byte) (py & 0xFF), (byte) ((py >>> 8) & 0xFF),
-                (byte) (pressed ? 1 : 0)
-        };
+    private byte[] buildTouchReport(int[] contactIds, float[] xs, float[] ys, int count) {
+        byte[] report = new byte[31]; // Five contacts (6 bytes each) plus Contact Count.
+        for (int i = 0; i < count; i++) {
+            int base = i * 6;
+            int px = toTouchCoordinate(xs[i]);
+            int py = toTouchCoordinate(ys[i]);
+            report[base] = 0x07;
+            report[base + 1] = (byte) (contactIds[i] & 0xFF);
+            report[base + 2] = (byte) (px & 0xFF);
+            report[base + 3] = (byte) ((px >>> 8) & 0xFF);
+            report[base + 4] = (byte) (py & 0xFF);
+            report[base + 5] = (byte) ((py >>> 8) & 0xFF);
+        }
+        report[30] = (byte) count;
+        return report;
     }
 
     private int toTouchCoordinate(float value) {
@@ -447,9 +473,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
                 Math.round(Math.max(0f, Math.min(1f, value)) * 32767f)));
     }
 
-    private byte[] neutralTouchReport() {
-        return new byte[] { 0, 1, 0, 0, 0, 0, 0 };
-    }
+    private byte[] neutralTouchReport() { return new byte[31]; }
 
     /** Select one independent Bluetooth HID personality per registration. */
     public void setInputMode(boolean showGamepadOverlay) {
@@ -616,7 +640,7 @@ private static final byte[] TOUCH_REPORT_DESCRIPTOR = new byte[] {
             lastQueuedButtons = -1;
             pendingGamepadReport = null;
             gamepadReportQueued = false;
-            lastQueuedTouchPressed = false;
+            lastQueuedTouchSignature = -1;
             pendingTouchReport = null;
             touchReportQueued = false;
 

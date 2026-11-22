@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OfflineMirror Gamepad + Wi-Fi Touch</string>
+    <string name="remote_control_service_description">Receives touch gestures from an authenticated paired OfflineMirror Viewer over the local Wi-Fi session. It does not inspect screen content.</string>
+</resources>

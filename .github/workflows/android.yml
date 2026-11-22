@@ -1,4 +1,4 @@
-name: Build OfflineMirror APK
+name: Build OfflineMirror control variants
 
 on:
   push:
@@ -36,10 +36,17 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build debug APK
+      - name: Build both signed release variants
         run: |
           set -o pipefail
-          gradle assembleDebug --stacktrace 2>&1 | tee build-output.log
+          gradle assembleGamepadWifiRelease assembleTouchHidRelease --stacktrace 2>&1 | tee build-output.log
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          cp app/build/outputs/apk/gamepadWifi/release/*.apk release/OfflineMirror-Gamepad-WiFi-1.59.0-release.apk
+          cp app/build/outputs/apk/touchHid/release/*.apk release/OfflineMirror-Touch-HID-Multitouch-1.59.0-release.apk
+          sha256sum release/*.apk > release/SHA256SUMS.txt
 
       - name: Upload failure diagnostics
         if: failure()
@@ -49,15 +56,10 @@ jobs:
           path: build-output.log
           if-no-files-found: warn
 
-      - name: Generate APK checksum
-        run: sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/app-debug.apk.sha256
-
-      - name: Upload APK and checksum
+      - name: Upload both release APKs and checksums
         uses: actions/upload-artifact@v4
         with:
-          name: OfflineMirror-debug-apk
-          path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/debug/app-debug.apk.sha256
+          name: OfflineMirror-1.59.0-release-apks
+          path: release/*
           if-no-files-found: error
           retention-days: 14

@@ -230,6 +230,21 @@ public class MainActivity extends Activity {
             setStatus("Sharing dihentikan. Pairing key sebelumnya sudah tidak berlaku.");
         });
 
+        if (BuildConfig.VARIANT_DIRECT_TOUCH) {
+            Button accessibilityButton = makeButton(
+                    "ENABLE TOUCH DIRECT (ACCESSIBILITY)", Color.rgb(24, 139, 106));
+            LinearLayout.LayoutParams accessibilityParams = matchWrap();
+            accessibilityParams.topMargin = dp(8);
+            page.addView(accessibilityButton, accessibilityParams);
+            accessibilityButton.setOnClickListener(v -> new AlertDialog.Builder(this)
+                    .setTitle("Touch Direct Wi-Fi")
+                    .setMessage("Pada HP Host, aktifkan layanan OfflineMirror Remote Touch di Pengaturan Aksesibilitas. Layanan ini hanya meneruskan gesture dari Viewer yang sudah dipair melalui Wi-Fi. Layanan tidak membaca isi layar.")
+                    .setNegativeButton("NANTI", null)
+                    .setPositiveButton("BUKA PENGATURAN", (dialog, which) ->
+                            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
+                    .show());
+        }
+
         Button inputDiagnosticsButton = makeButton(
                 "SCAN INPUT BLUETOOTH", Color.rgb(43, 83, 132));
         LinearLayout.LayoutParams inputDiagnosticsParams = matchWrap();

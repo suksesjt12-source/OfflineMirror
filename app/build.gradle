@@ -10,8 +10,32 @@ android {
         applicationId "com.offlinemirror.app"
         minSdk 21
         targetSdk 35
-        versionCode 73
-        versionName "1.58.0"
+        versionCode 74
+        versionName "1.59.0"
+    }
+
+    buildFeatures { buildConfig true }
+    flavorDimensions "input"
+    productFlavors {
+        gamepadWifi {
+            dimension "input"
+            applicationIdSuffix ".gamepadwifi"
+            versionNameSuffix "-gamepad-wifi"
+            buildConfigField "boolean", "VARIANT_DIRECT_TOUCH", "true"
+        }
+        touchHid {
+            dimension "input"
+            applicationIdSuffix ".touchhid"
+            versionNameSuffix "-touch-hid"
+            buildConfigField "boolean", "VARIANT_DIRECT_TOUCH", "false"
+        }
+    }
+    buildTypes {
+        debug { }
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+        }
     }
 
     compileOptions {

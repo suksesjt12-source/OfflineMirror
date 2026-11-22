@@ -749,6 +749,26 @@ public class MirrorHostService extends Service {
                         }
                         continue;
                     }
+                    if (type == 8) {
+                        int contactCount = input.readUnsignedByte();
+                        if (contactCount > 5) {
+                            throw new IOException("Invalid remote touch contact count");
+                        }
+                        int[] contactIds = new int[contactCount];
+                        float[] touchX = new float[contactCount];
+                        float[] touchY = new float[contactCount];
+                        for (int i = 0; i < contactCount; i++) {
+                            contactIds[i] = input.readInt();
+                            touchX[i] = input.readFloat();
+                            touchY[i] = input.readFloat();
+                        }
+                        if (!RemoteTouchAccessibilityService.sendTouchState(
+                                contactIds, touchX, touchY)) {
+                            android.util.Log.w("OfflineMirror",
+                                    "Touch Direct packet received but Host Accessibility service is not enabled");
+                        }
+                        continue;
+                    }
                     if (type == 5) {
                         String clipboardText = input.readUTF();
                         boolean accepted = clipboardText.length() <= 4096;
@@ -803,7 +823,11 @@ public class MirrorHostService extends Service {
                 try { if (input != null) input.close(); } catch (Exception ignored) {}
                 try { if (output != null) output.close(); } catch (Exception ignored) {}
                 try { if (client != null) client.close(); } catch (Exception ignored) {}
-                if (controlClientSocket == client) controlClientSocket = null;
+                if (controlClientSocket == client) {
+                    controlClientSocket = null;
+                    RemoteTouchAccessibilityService.sendTouchState(
+                            new int[0], new float[0], new float[0]);
+                }
                 if (controlClientOutput == output) controlClientOutput = null;
             }
         }
